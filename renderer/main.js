@@ -1,4 +1,3 @@
-// renderer/main.js
 import { store, ensureNetwork, activateNetwork, uiRefs } from './state/store.js';
 import { setupIngest } from './irc/ingest.js';
 import { ErrorDock } from './ui/ErrorDock.js';

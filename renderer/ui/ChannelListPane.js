@@ -1,4 +1,3 @@
-// renderer/ui/ChannelListPane.js
 export class ChannelListPane {
   constructor(net) {
     this.net = net;

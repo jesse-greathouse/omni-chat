@@ -1,8 +1,6 @@
 import {
   store,
-  ensureNetwork,
   ensureChannel,
-  activateNetwork,
   appendToConsole,
   getNetworkBySessionId,
 } from '../state/store.js';
@@ -52,7 +50,7 @@ export function setupIngest({ onError }) {
   };
 }
 
-// ——— helpers ———
+// helpers
 
 function publishChanlistSnapshot(net) {
   const items = Array.from(net.chanListTable.values())

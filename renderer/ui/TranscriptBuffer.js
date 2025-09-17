@@ -31,7 +31,7 @@ export class TranscriptBuffer {
     this._textNode.nodeValue = '';
   }
 
-  // --- private ---
+  // private
   _scheduleFrame() {
     if (this._pendingFrame) return;
     this._pendingFrame = true;
