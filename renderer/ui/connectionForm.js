@@ -2,10 +2,10 @@ export function createProfilesPanel({ onConnect }) {
   const wrap = document.createElement('div');
   wrap.className = 'conn-wrap';
   wrap.innerHTML = `
-    <div class="conn-card" style="width:680px">
+    <div class="conn-card">
       <h3>Omni-Chat — Connections</h3>
 
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+      <div class="conn-grid">
         <section style="border:1px solid var(--border);border-radius:8px;padding:12px;">
           <h4 style="margin:0 0 8px 0;">Global Defaults</h4>
           <div class="form-row"><label>Nick</label><input id="gNick" type="text"/></div>
@@ -18,12 +18,12 @@ export function createProfilesPanel({ onConnect }) {
           </div>
         </section>
 
-        <section style="border:1px solid var(--border);border-radius:8px;padding:12px;">
+        <section class="server-profiles" style="border:1px solid var(--border);border-radius:8px;padding:12px;">
           <div style="display:flex;align-items:center;justify-content:space-between;">
             <h4 style="margin:0;">Server Profiles</h4>
             <button class="btn" id="addServer">Add Server</button>
           </div>
-          <div id="profilesList" style="margin-top:8px;max-height:340px;overflow:auto;"></div>
+          <div id="profilesList" class="profiles-list" style="margin-top:8px;"></div>
         </section>
       </div>
     </div>

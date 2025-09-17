@@ -282,10 +282,14 @@ async function restartSession(sessionId, opts) {
   return startSession(sessionId, opts);
 }
 
-// ---------- Windows / menu ----------
+// Windows / menu
 function createWindow() {
   mainWin = new BrowserWindow({
-    width: 960, height: 740,
+    width: 1480,
+    height: 1000,
+    minWidth: 1024,
+    minHeight: 700,
+    center: true,
     webPreferences: {
       preload: path.join(app.getAppPath(), 'preload.cjs'),
       contextIsolation: true, nodeIntegration: false

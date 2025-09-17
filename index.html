@@ -201,15 +201,37 @@
         height: 100%;
         display: grid;
         place-items: center;
+        padding: 16px;
       }
       .conn-card {
-        width: 520px; max-width: 90vw;
+        width: min(1000px, 92vw);
+        max-height: 92vh;         /* scale with viewport height */
         border: 1px solid var(--border);
         background: var(--panel);
         border-radius: 10px;
         padding: 16px;
+        display: grid;            /* allow inner grid to claim remaining height */
+        grid-template-rows: auto 1fr;
       }
       .conn-card h3 { margin: 0 0 10px 0; }
+      /* two-column layout that stretches; collapses to one column when narrow */
+      .conn-grid {
+        display: grid;
+        grid-template-columns: minmax(260px, 1fr) minmax(420px, 1.5fr);
+        gap: 16px;
+        height: 100%;
+      }
+      @media (max-width: 880px) {
+        .conn-grid { grid-template-columns: 1fr; }
+      }
+
+      /* make the server profiles section vertically flexible */
+      .server-profiles { display: flex; flex-direction: column; }
+      .server-profiles .profiles-list {
+        flex: 1 1 auto;
+        min-height: 220px;        /* has some body even on small windows */
+        overflow: auto;           /* scroll only when it actually needs to */
+      }
       .form-row { display: grid; grid-template-columns: 120px 1fr; gap: 8px; align-items: center; margin: 8px 0; }
       .form-row input[type="text"], .form-row input[type="number"] {
         width: 100%; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; background: #0e1320; color: var(--fg);
