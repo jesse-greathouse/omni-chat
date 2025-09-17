@@ -18,7 +18,12 @@ export class ChannelPane {
     this.transcriptEl.appendChild(this.topicEl);
     this.linesHost = document.createElement('div');
     this.transcriptEl.appendChild(this.linesHost);
-    this.buffer = new TranscriptBuffer(this.linesHost, { maxLines: 8000, pruneChunk: 2000 });
+    this.buffer = new TranscriptBuffer(this.linesHost, {
+      maxLines: 2000,
+      pruneChunk: 240,
+      scrollEl: this.transcriptEl,
+      snapThreshold: 56
+    });
 
     this.usersEl = document.createElement('div');
     this.usersEl.className = 'users';
@@ -45,7 +50,7 @@ export class ChannelPane {
   }
 
   mount(container) { container.appendChild(this.root); }
-  show() { this.root.classList.remove('hidden'); }
+  show() { this.root.classList.remove('hidden'); this.buffer.onShow(); }
   hide() { this.root.classList.add('hidden'); }
 
   setTopic(s) {

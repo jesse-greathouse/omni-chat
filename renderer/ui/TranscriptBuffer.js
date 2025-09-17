@@ -1,8 +1,10 @@
 export class TranscriptBuffer {
-  constructor(hostEl, { maxLines = 5000, pruneChunk = 1000 } = {}) {
+  constructor(hostEl, { maxLines = 5000, pruneChunk = 1000, scrollEl = null, snapThreshold = 40 } = {}) {
     this.hostEl = hostEl;
     this.maxLines = maxLines;
     this.pruneChunk = pruneChunk;
+    this.scrollEl = scrollEl || hostEl;
+    this.snapThreshold = snapThreshold;
 
     this.lines = [];                // ring buffer storage
     this._textNode = document.createTextNode('');
@@ -12,14 +14,27 @@ export class TranscriptBuffer {
     this._pendingFrame = false;
     this._pendingPrune = false;
     this._atBottom = true;
+    this._follow = true;
+    this._ignoreScroll = false;
 
     // cheap layout containment (prevents tab-show jank)
     this.hostEl.style.contain = 'content';
-  }
+
+    // Keep auto-scroll state in sync with user scrolling.
+    // If close enough to the bottom, snap and keep following.
+    this._onScroll = () => {
+      if (this._ignoreScroll) return; // programmatic scroll; don’t flip intent
+      const dist = this._distanceFromBottom();
+      const near = dist <= this.snapThreshold;
+      this._atBottom = near;
+      this._follow = near ? true : false; // scroll up => leave follow; near bottom => re-enter
+    };
+    this.scrollEl.addEventListener('scroll', this._onScroll, { passive: true });
+}
 
   append(text) {
-    // capture scroll state before we mutate text
-    this._atBottom = (this.hostEl.scrollHeight - this.hostEl.scrollTop - this.hostEl.clientHeight) < 40;
+    // capture scroll state before we mutate text (measure scroll container)
+    this._atBottom = this._distanceFromBottom() < this.snapThreshold || this._follow;
 
     this.lines.push(text);
     this._scheduleFrame();
@@ -31,6 +46,11 @@ export class TranscriptBuffer {
     this._textNode.nodeValue = '';
   }
 
+  // Call this when a previously hidden pane becomes visible again.
+  onShow() {
+    if (this._follow) this._snapToBottomNow();
+  }
+
   // private
   _scheduleFrame() {
     if (this._pendingFrame) return;
@@ -39,15 +59,36 @@ export class TranscriptBuffer {
       this._pendingFrame = false;
       // Join with single newline; render once
       this._textNode.nodeValue = this.lines.join('\n') + (this.lines.length ? '\n' : '');
-      if (this._atBottom) this._scrollToBottomSoon();
+      if (this._follow || this._atBottom) this._scrollToBottomSoon();
     });
   }
 
   _scrollToBottomSoon() {
     // end-of-paint scroll to avoid layout thrash
     requestAnimationFrame(() => {
-      this.hostEl.scrollTop = this.hostEl.scrollHeight;
+      this._withIgnoredScroll(() => {
+        this.scrollEl.scrollTop = this.scrollEl.scrollHeight;
+      });
     });
+  }
+
+  _snapToBottomNow() {
+    this._withIgnoredScroll(() => {
+      this.scrollEl.scrollTop = this.scrollEl.scrollHeight;
+    });
+  }
+
+  _withIgnoredScroll(fn) {
+    this._ignoreScroll = true;
+    try { fn(); } finally {
+      // clear on the next two frames to outlive the browser’s scroll dispatch
+      requestAnimationFrame(() => requestAnimationFrame(() => { this._ignoreScroll = false; }));
+    }
+  }
+
+  _distanceFromBottom() {
+    const el = this.scrollEl;
+    return el.scrollHeight - el.scrollTop - el.clientHeight;
   }
 
   _schedulePrune() {

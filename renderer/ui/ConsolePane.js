@@ -10,7 +10,12 @@ export class ConsolePane {
 
     this.transcriptEl = document.createElement('div');
     this.transcriptEl.className = 'transcript';
-    this.buffer = new TranscriptBuffer(this.transcriptEl, { maxLines: 8000, pruneChunk: 2000 });
+    this.buffer = new TranscriptBuffer(this.transcriptEl, {
+      maxLines: 2000,
+      pruneChunk: 240,
+      scrollEl: this.transcriptEl,
+      snapThreshold: 56
+    });
 
     this.inputRow = document.createElement('div');
     this.inputRow.className = 'input-row';
@@ -32,7 +37,7 @@ export class ConsolePane {
   }
 
   mount(container) { container.appendChild(this.root); }
-  show() { this.root.classList.remove('hidden'); }
+  show() { this.root.classList.remove('hidden'); this.buffer.onShow(); }
   hide() { this.root.classList.add('hidden'); }
 
   appendLine(text) {
