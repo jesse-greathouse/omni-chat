@@ -1,0 +1,33 @@
+{
+  "name": "omni-chat",
+  "version": "1.0.0",
+  "description": "A Multi Platform IRC Chat Client",
+  "main": "main.js",
+  "type": "module",
+  "scripts": {
+    "start": "electron .",
+    "start:verbose": "ELECTRON_ENABLE_LOGGING=1 electron .",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jesse-greathouse/omni-chat.git"
+  },
+  "keywords": [
+    "Chat",
+    "IRC",
+    "Client"
+  ],
+  "author": "Jesse Greathouse <jesse.greathouse@gmail.com>",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/jesse-greathouse/omni-chat/issues"
+  },
+  "homepage": "https://github.com/jesse-greathouse/omni-chat#readme",
+  "devDependencies": {
+    "electron": "^38.0.0"
+  },
+  "dependencies": {
+    "electron-store": "^10.1.0"
+  }
+}
