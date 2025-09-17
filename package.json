@@ -4,8 +4,21 @@
   "description": "A Multi Platform IRC Chat Client",
   "main": "main.js",
   "type": "module",
+  "build": {
+    "appId": "com.example.omni-chat",
+    "mac": {
+      "icon": "build/icons/icon.icns"
+    },
+    "win": {
+      "icon": "build/icons/icon.ico"
+    },
+    "linux": {
+      "icon": "build/icons/png"
+    }
+  },
   "scripts": {
     "start": "electron .",
+    "pack:win": "electron-packager . OmniChat --platform=win32 --arch=x64 --out=.dist --overwrite --asar --icon=build/icons/icon.ico",
     "start:verbose": "ELECTRON_ENABLE_LOGGING=1 electron .",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
@@ -25,7 +38,8 @@
   },
   "homepage": "https://github.com/jesse-greathouse/omni-chat#readme",
   "devDependencies": {
-    "electron": "^38.0.0"
+    "electron": "^38.0.0",
+    "electron-packager": "^17.1.2"
   },
   "dependencies": {
     "electron-store": "^10.1.0"

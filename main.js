@@ -1,6 +1,6 @@
 // main.js
 import Store from 'electron-store';
-import { app, BrowserWindow, ipcMain, Menu } from 'electron';
+import { app, BrowserWindow, ipcMain, Menu, Tray, nativeImage } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs';
 import net from 'node:net';
@@ -10,6 +10,12 @@ import { spawn, execFile } from 'node:child_process';
 
 const sessions = new Map();
 let mainWin = null;
+
+function assetPath(...p) {
+  // In production, resources live under process.resourcesPath
+  const base = app.isPackaged ? process.resourcesPath : app.getAppPath();
+  return path.join(base, ...p);
+}
 
 // ---------- Settings layout ----------
 //  omnic-chat.json:
@@ -284,17 +290,29 @@ async function restartSession(sessionId, opts) {
 
 // Windows / menu
 function createWindow() {
+  const iconWinLinux = process.platform === 'win32'
+    ? assetPath('build', 'icons', 'icon.ico')
+    : assetPath('build', 'icons', 'png', 'icon.png'); // Linux prefers PNG
+
   mainWin = new BrowserWindow({
     width: 1480,
     height: 1000,
     minWidth: 1024,
     minHeight: 700,
     center: true,
+    icon: process.platform === 'darwin' ? undefined : iconWinLinux,
     webPreferences: {
       preload: path.join(app.getAppPath(), 'preload.cjs'),
       contextIsolation: true, nodeIntegration: false
     }
   });
+
+  if (process.platform === 'darwin') {
+    const icns = assetPath('build', 'icons', 'icon.icns');
+    const nimg = nativeImage.createFromPath(icns);
+    if (!nimg.isEmpty()) app.dock.setIcon(nimg);
+  }
+
   mainWin.loadFile('index.html');
 }
 function buildMenu() {
@@ -306,6 +324,8 @@ function buildMenu() {
   ];
   Menu.setApplicationMenu(Menu.buildFromTemplate(tpl));
 }
+
+let tray;
 
 app.whenReady().then(() => {
   createWindow();
@@ -327,6 +347,9 @@ app.whenReady().then(() => {
     if (!event) return;
     BrowserWindow.getAllWindows().forEach(w => w.webContents.send(`ui-sub:${event}`, payload));
   });
+
+  tray = new Tray(nativeImage.createFromPath(iconPath));
+  tray.setToolTip('Omni Chat');
 });
 
 app.on('before-quit', async () => {
