@@ -17,7 +17,7 @@ function assetPath(...p) {
   return path.join(base, ...p);
 }
 
-// ---------- Settings layout ----------
+// Settings layout
 //  omnic-chat.json:
 //  {
 //    ui: {...},
@@ -109,7 +109,7 @@ ipcMain.handle('profiles:delete', (_e, host) => {
 });
 ipcMain.handle('profiles:resolve', (_e, host) => resolveServerProfile(String(host || '').trim()));
 
-// ---------- Utility ----------
+// Utility
 function genId() { return randomBytes(8).toString('hex'); }
 
 function execFileP(cmd, args, opts = {}) {
@@ -292,7 +292,7 @@ async function restartSession(sessionId, opts) {
 function createWindow() {
   const iconWinLinux = process.platform === 'win32'
     ? assetPath('build', 'icons', 'icon.ico')
-    : assetPath('build', 'icons', 'png', 'icon.png'); // Linux prefers PNG
+    : assetPath('build', 'icons', 'png', 'icon.png');
 
   mainWin = new BrowserWindow({
     width: 1480,
@@ -331,6 +331,18 @@ app.whenReady().then(() => {
   createWindow();
   buildMenu();
 
+  // Tray icon (use ICO on Windows, PNG elsewhere)
+  const trayIconPath = process.platform === 'win32'
+    ? assetPath('build', 'icons', 'icon.ico')
+    : assetPath('build', 'icons', 'png', 'icon.png');
+
+  try {
+    tray = new Tray(trayIconPath);
+    tray.setToolTip('Omni Chat');
+  } catch (e) {
+    // non-fatal if tray cannot be created (e.g., missing icon)
+  }
+
   // Sessions IPC only (no legacy backend)
   ipcMain.handle('session:start', async (_e, id, opts) => startSession(id || genId(), opts));
   ipcMain.handle('session:stop',  async (_e, id)       => stopSession(id));
@@ -347,9 +359,6 @@ app.whenReady().then(() => {
     if (!event) return;
     BrowserWindow.getAllWindows().forEach(w => w.webContents.send(`ui-sub:${event}`, payload));
   });
-
-  tray = new Tray(nativeImage.createFromPath(iconPath));
-  tray.setToolTip('Omni Chat');
 });
 
 app.on('before-quit', async () => {
