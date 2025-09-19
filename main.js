@@ -1,22 +1,94 @@
 import Store from 'electron-store';
 import { app, BrowserWindow, ipcMain, Menu, Tray, nativeImage, shell } from 'electron';
 import path from 'node:path';
+import os from 'node:os';
 import fs from 'node:fs';
 import net from 'node:net';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, createHash } from 'node:crypto';
 import readline from 'node:readline';
 import { spawn, execFile, spawnSync } from 'node:child_process';
 
+/* =============================================================================
+   Globals
+============================================================================= */
 const sessions = new Map();
 let mainWin = null;
 let installerWin = null;
+let tray = null;
+let bootstrapChild = null;
+let bootstrapLogPath = null;
+
+/* =============================================================================
+   Paths & Small Utilities
+============================================================================= */
+const isWin = process.platform === 'win32';
 
 function assetPath(...p) {
   const base = app.isPackaged ? process.resourcesPath : app.getAppPath();
   return path.join(base, ...p);
 }
+function quote(s) { return `"${String(s).replace(/"/g, '\\"')}"`; }
+function genId() { return randomBytes(8).toString('hex'); }
 
-// settings
+function sendToAll(ch, payload) {
+  for (const w of BrowserWindow.getAllWindows()) w.webContents.send(ch, payload);
+}
+function pipeChildLogs(child) {
+  child.stdout?.on('data', (d) => sendToAll('backend-log', d.toString()));
+  child.stderr?.on('data', (d) => sendToAll('backend-log', d.toString()));
+}
+function killChild(child) {
+  if (!child) return;
+  try {
+    if (isWin) spawn('taskkill', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true });
+    else child.kill('SIGTERM');
+  } catch {}
+}
+function execFileP(cmd, args, opts = {}) {
+  return new Promise((resolve, reject) => {
+    execFile(cmd, args, opts, (err, stdout, stderr) => {
+      if (err) return reject(Object.assign(err, { stdout, stderr }));
+      resolve({ stdout, stderr });
+    });
+  });
+}
+function seedUnixPath(env) {
+  if (process.platform === 'darwin' || process.platform === 'linux') {
+    const seed = [
+      '/opt/homebrew/bin','/opt/homebrew/sbin', // Apple Silicon Homebrew
+      '/usr/local/bin','/usr/local/sbin',       // Intel mac / common Linux
+      '/opt/local/bin','/opt/local/sbin'        // MacPorts
+    ];
+    const cur = env.PATH || '';
+    const add = seed.filter(p => !cur.split(':').includes(p));
+    if (add.length) env.PATH = add.join(':') + (cur ? (':' + cur) : '');
+  }
+  return env;
+}
+function resolveTool(name, extraDirs = []) {
+  // 1) explicit overrides
+  const k = [`${name.toUpperCase()}_EXE`, `OMNI_${name.toUpperCase()}_EXE`];
+  for (const key of k) {
+    const v = process.env[key];
+    if (v && fs.existsSync(v)) return v;
+  }
+  // 2) PATH search (portable)
+  const PATH = (process.env.PATH || '').split(path.delimiter);
+  for (const d of [...extraDirs, ...PATH]) {
+    if (!d) continue;
+    const p = path.join(d, name);
+    if (fs.existsSync(p)) return p;
+    if (isWin) {
+      const pexe = p.endsWith('.exe') ? p : p + '.exe';
+      if (fs.existsSync(pexe)) return pexe;
+    }
+  }
+  return null;
+}
+
+/* =============================================================================
+   Settings & Profiles
+============================================================================= */
 const settings = new Store({
   name: 'omni-chat',
   defaults: {
@@ -33,7 +105,6 @@ ipcMain.handle('settings:set', (_e, key, value) => { settings.set(key, value); r
 ipcMain.handle('settings:all', () => settings.store);
 ipcMain.handle('settings:path', () => settings.path);
 
-// profiles (unchanged)
 function getServers() {
   const s = settings.get('servers', {});
   return (s && typeof s === 'object') ? s : {};
@@ -85,31 +156,34 @@ ipcMain.handle('profiles:delete', (_e, host) => {
 });
 ipcMain.handle('profiles:resolve', (_e, host) => resolveServerProfile(String(host || '').trim()));
 
-// util
-function genId() { return randomBytes(8).toString('hex'); }
-function execFileP(cmd, args, opts = {}) {
-  return new Promise((resolve, reject) => {
-    execFile(cmd, args, opts, (err, stdout, stderr) => {
-      if (err) return reject(Object.assign(err, { stdout, stderr }));
-      resolve({ stdout, stderr });
-    });
+/* =============================================================================
+   Backend Discovery (opam env + omni client)
+============================================================================= */
+function canonicalSessionKey(opts) {
+  const nick = String(opts.nick || '').trim().toLowerCase();
+  const host = String(opts.server || '').trim().toLowerCase();
+  const port = String(opts.ircPort || '');
+  const proto = opts.tls ? 'tls' : 'tcp';
+  return `${nick}@${host}:${port}/${proto}`;
+}
+function deriveUnixSocketPath(sessionKey) {
+  const base = process.env.XDG_RUNTIME_DIR || os.tmpdir();
+  const dir = path.join(base, 'omni-chat');
+  try { fs.mkdirSync(dir, { recursive: true, mode: 0o700 }); } catch {}
+  const hash = createHash('sha1').update(sessionKey).digest('hex').slice(0, 16);
+  return path.join(dir, `oi-${hash}.sock`);
+}
+async function ensureUnixSocketFree(sockPath) {
+  if (!fs.existsSync(sockPath)) return;
+  const ok = await new Promise((resolve) => {
+    const c = net.createConnection({ path: sockPath });
+    let settled = false;
+    c.once('connect', () => { settled = true; c.destroy(); resolve(true); });
+    c.once('error',  () => { if (!settled) resolve(false); });
+    setTimeout(() => { if (!settled) { try { c.destroy(); } catch {} resolve(false); } }, 250);
   });
-}
-function pipeChildLogs(child) {
-  child.stdout?.on('data', (d) => BrowserWindow.getAllWindows()
-    .forEach(w => w.webContents.send('backend-log', d.toString())));
-  child.stderr?.on('data', (d) => BrowserWindow.getAllWindows()
-    .forEach(w => w.webContents.send('backend-log', d.toString())));
-}
-function killChild(child) {
-  if (!child) return;
-  try {
-    if (process.platform === 'win32') {
-      spawn('taskkill', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true });
-    } else {
-      child.kill('SIGTERM');
-    }
-  } catch {}
+  if (ok) throw new Error(`A session for this nick/server is already active (socket: ${sockPath}).`);
+  try { fs.unlinkSync(sockPath); } catch {}
 }
 async function getFreePort() {
   return new Promise((resolve, reject) => {
@@ -122,17 +196,13 @@ async function getFreePort() {
     });
   });
 }
+
 async function resolveOpamEnv(switchName = 'omni-irc-dev') {
   const base = { ...process.env };
-  const forWin = process.platform === 'win32';
-  const shellArg = forWin ? 'cmd' : 'sh';
-  const { stdout } = await execFileP(
-    'opam',
-    ['env', `--switch=${switchName}`, '--set-switch', `--shell=${shellArg}`],
-    { windowsHide: true }
-  );
+  const shellArg = isWin ? 'cmd' : 'sh';
+  const { stdout } = await execFileP('opam', ['env', `--switch=${switchName}`, '--set-switch', `--shell=${shellArg}`], { windowsHide: true });
   const envFromOpam = { ...base };
-  if (forWin) {
+  if (isWin) {
     stdout.split(/\r?\n/).forEach((line) => {
       const m = /^set\s+([^=]+)=(.*)$/i.exec(line);
       if (m) envFromOpam[m[1]] = m[2];
@@ -146,292 +216,285 @@ async function resolveOpamEnv(switchName = 'omni-irc-dev') {
   return envFromOpam;
 }
 async function resolveOmniIrcClientPath(env) {
-  const exeName = process.platform === 'win32' ? 'omni-irc-client.exe' : 'omni-irc-client';
+  const exeName = isWin ? 'omni-irc-client.exe' : 'omni-irc-client';
   if (process.env.OMNI_IRC_CLIENT) return process.env.OMNI_IRC_CLIENT;
+
+  // 1) dev build guess
   try {
     const guess = path.resolve(app.getAppPath(), '..', 'omni-irc', '_build', 'install', 'default', 'bin', exeName);
     if (fs.existsSync(guess)) return guess;
   } catch {}
+
+  // 2) direct switch bin: $OPAMROOT/$OPAMSWITCH/bin
+  const root = env.OPAMROOT || path.join(os.homedir(), '.opam');
+  const sw   = env.OPAMSWITCH || 'omni-irc-dev';
+  const fromSwitch = path.join(root, sw, 'bin', exeName);
+  if (fs.existsSync(fromSwitch)) return fromSwitch;
+
+  // 3) opam var bin (if opam is callable)
   try {
-    const { stdout } = await execFileP('opam', ['var', 'bin'], { env, windowsHide: true });
-    const binDir = stdout.trim();
-    const p = path.join(binDir, exeName);
-    if (fs.existsSync(p)) return p;
+    const opamExe = resolveTool(isWin ? 'opam.exe' : 'opam',
+      ['/opt/homebrew/bin','/usr/local/bin','/opt/local/bin']);
+    if (opamExe) {
+      const { stdout } = await execFileP(opamExe, ['var', 'bin'], { env, windowsHide: true });
+      const p = path.join(stdout.trim(), exeName);
+      if (fs.existsSync(p)) return p;
+    }
   } catch {}
+
+  // 4) fall back to PATH (spawn will succeed if PATH is seeded)
   return exeName;
 }
+
 async function ensureClientBinary() {
-  const env = await resolveOpamEnv('omni-irc-dev');
+  // Start from a PATH that works on macOS/Linux GUI launches
+  const base = seedUnixPath({ ...process.env });
+
+  // Try to get real opam env; if that fails, still return a usable env
+  let env = base;
+  try {
+    const shellArg = isWin ? 'cmd' : 'sh';
+    const { stdout } = await execFileP('opam', ['env', '--switch=omni-irc-dev', '--set-switch', `--shell=${shellArg}`], { windowsHide: true });
+    const next = { ...base };
+    if (isWin) {
+      stdout.split(/\r?\n/).forEach(line => { const m = /^set\s+([^=]+)=(.*)$/i.exec(line); if (m) next[m[1]] = m[2]; });
+    } else {
+      stdout.split(/\r?\n/).forEach(line => { const m = /^\s*export\s+([^=]+)=(["']?)(.*)\2\s*;?\s*$/.exec(line); if (m) next[m[1]] = m[3]; });
+    }
+    env = next;
+  } catch {
+    // Make sure the switch bin is on PATH even without opam
+    const root = env.OPAMROOT || path.join(os.homedir(), '.opam');
+    const sw   = 'omni-irc-dev';
+    const bin  = path.join(root, sw, 'bin');
+    if (fs.existsSync(bin)) env.PATH = `${bin}${path.delimiter}${env.PATH || ''}`;
+    env.OPAMROOT = env.OPAMROOT || root;
+    env.OPAMSWITCH = env.OPAMSWITCH || sw;
+  }
+
   const exe = await resolveOmniIrcClientPath(env);
   return { env, exe };
 }
-
-// backend readiness + bootstrap runner
 async function backendReady() {
   try {
-    const { exe } = await ensureClientBinary();
-    return fs.existsSync(exe);
+    const { env, exe } = await ensureClientBinary();
+    const res = spawnSync(exe, ['--version'], { env, windowsHide: true, encoding: 'utf8' });
+    if (res.status === 0) return true;
+    const s = (res.stdout || '') + (res.stderr || '');
+    return /omni-irc/i.test(s); // some builds only print on stderr
   } catch {
     return false;
   }
 }
 
-function createInstallerWindow() {
-  installerWin = new BrowserWindow({
-    width: 880,
-    height: 600,
-    title: 'Omni Chat – First-time Setup',
-    resizable: true,
-    webPreferences: {
-      preload: path.join(app.getAppPath(), 'preload.cjs'),
-      contextIsolation: true,
-      nodeIntegration: false
-    }
-  });
-  // minimal installer page you ship in /renderer
-  installerWin.loadFile(path.join(app.getAppPath(), 'renderer', 'installer.html'));
-}
-
-function pipeInstallerLogs(child) {
-  const send = (ch, payload) => installerWin?.webContents.send(ch, payload);
-  child.stdout?.on('data', d => send('bootstrap:log', d.toString()));
-  child.stderr?.on('data', d => send('bootstrap:log', d.toString()));
-  child.on('exit', (code) => {
-    if (code === 0) send('bootstrap:done');
-    else send('bootstrap:error', code);
-  });
-}
-
-function runBootstrapOnce() {
-  // Windows-first. If you want cross-platform, prefer pwsh on mac/linux.
-  const script = assetPath('bin', 'bootstrap.ps1');
-
-  // copy to userData to dodge ASAR edge cases
-  const tmpDir = app.getPath('userData');
-  const tmpPs1 = path.join(tmpDir, `bootstrap-${Date.now()}.ps1`);
-  try { fs.copyFileSync(script, tmpPs1); } catch {}
-
-  const args = ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', tmpPs1];
-  const child = spawn('powershell.exe', args, {
-    cwd: tmpDir,
-    windowsHide: true,
-    env: { ...process.env }
-  });
-  child.on('exit', () => { try { fs.unlinkSync(tmpPs1); } catch {} });
-  pipeInstallerLogs(child);
-  return child;
-}
-
-let bootstrapChild = null;
-let bootstrapLogPath = null;
-
-/** pick a PowerShell host */
+/* =============================================================================
+   Bootstrap (Unified: terminal | background)
+============================================================================= */
 function pickPwsh() {
-  if (process.platform !== 'win32') return null;
-  // prefer modern PowerShell (pwsh), fall back to Windows PowerShell
   const tryWhere = (cmd) => {
     try {
       const out = spawnSync('where', [cmd], { windowsHide: true, encoding: 'utf8' });
       if (out.status === 0) {
         const first = String(out.stdout || '').split(/\r?\n/).find(Boolean);
-        if (first && require('fs').existsSync(first.trim())) return first.trim();
+        if (first && fs.existsSync(first.trim())) return first.trim();
       }
     } catch {}
     return null;
   };
   return tryWhere('pwsh.exe') || tryWhere('powershell.exe') || 'powershell.exe';
 }
-
-
-/**
- * Open a real PowerShell terminal that runs bootstrap.ps1.
- * - Closes automatically on success
- * - On failure, the window stays open prompting "Press Enter to close"
- * We purposefully detach and do not stream logs into the UI.
- */
-function runBootstrapInTerminal() {
-  if (process.platform !== 'win32') {
-    throw new Error('This launcher is Windows-only (PowerShell).');
-  }
-  const script = assetPath('bin', 'bootstrap.ps1');
-  if (!fs.existsSync(script)) {
-    throw new Error(`bootstrap.ps1 not found at: ${script}`);
-  }
-  const pwsh = pickPwsh();
-  const cwd = app.isPackaged ? process.resourcesPath : app.getAppPath();
-  const env = { ...process.env, OPAMYES: '1' };
-
-  // Keep the console OPEN no matter what using -NoExit
-  // We also 'start' a new window to guarantee visibility
-  const cmdExe = process.env.ComSpec || 'cmd.exe';
-  const line = [
-    'start', '"Omni-IRC Setup"',
-    `"${pwsh}"`,
-    '-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass',
-    '-NoExit',
-    '-File', `"${script}"`
-  ].join(' ');
-
-  const child = spawn(cmdExe, ['/d', '/s', '/c', line], {
-    cwd,
-    env,
-    windowsHide: false,   // show the console
-    detached: true,
-    stdio: 'ignore',
-    windowsVerbatimArguments: true
-  });
-  child.unref(); // let it run independently
-  return true;
+function findTerminalOnLinux(cwd, script) {
+  const has = (c) => spawnSync('which', [c], { encoding: 'utf8' }).status === 0;
+  const runCmd = `bash -lc 'cd ${quote(cwd)} && ${quote(script)} ; echo; echo "Press Enter to close..." ; read -r _'`;
+  const choices = [
+    { cmd: 'x-terminal-emulator', args: ['-e', runCmd] },
+    { cmd: 'gnome-terminal',      args: ['--', 'bash','-lc', runCmd] },
+    { cmd: 'konsole',             args: ['-e', 'bash','-lc', runCmd] },
+    { cmd: 'xfce4-terminal',      args: ['-e', 'bash','-lc', runCmd] },
+    { cmd: 'xterm',               args: ['-e', 'bash','-lc', runCmd] },
+    { cmd: 'alacritty',           args: ['-e', 'bash','-lc', runCmd] },
+    { cmd: 'kitty',               args: ['bash','-lc', runCmd] }
+  ];
+  return choices.find(c => has(c.cmd)) || null;
 }
-
-/** send log line(s) to installer window & file */
 function sendBootstrapLog(line) {
   const text = typeof line === 'string' ? line : String(line);
-  try {
-    if (bootstrapLogPath) require('fs').appendFileSync(bootstrapLogPath, text);
-  } catch {}
-  for (const w of BrowserWindow.getAllWindows()) {
-    w.webContents.send('bootstrap:log', text);
-  }
+  try { if (bootstrapLogPath) fs.appendFileSync(bootstrapLogPath, text); } catch {}
+  sendToAll('bootstrap:log', text);
 }
 
-/** start or restart the bootstrap script and stream output */
-async function startBootstrapRun() {
-  // kill previous run if still alive
-  if (bootstrapChild && !bootstrapChild.killed) {
-    try { bootstrapChild.kill(); } catch {}
-    bootstrapChild = null;
+async function runBootstrap({ mode = 'terminal' } = {}) {
+  const isWin = process.platform === 'win32'; // ← make sure this exists
+  const cwd   = app.isPackaged ? process.resourcesPath : app.getAppPath();
+  const env   = { ...process.env, OPAMYES: '1' };
+  // Make Homebrew/MacPorts visible when the app is launched from Finder
+  if (process.platform === 'darwin') {
+    const seed = [
+      '/opt/homebrew/bin','/opt/homebrew/sbin',
+      '/usr/local/bin','/usr/local/sbin',
+      '/opt/local/bin','/opt/local/sbin'
+    ];
+    const cur = env.PATH || '';
+    const add = seed.filter(p => !cur.includes(p)).join(':');
+    env.PATH = add ? `${add}:${cur}` : cur;
+  }
+  const script = isWin ? assetPath('bin', 'bootstrap.ps1') : assetPath('bin', 'bootstrap');
+
+  if (!fs.existsSync(script)) {
+    const name = path.basename(script);
+    sendBootstrapLog(`✘ ${name} not found at ${script}\n`);
+    throw new Error(`${name} missing`);
+  }
+  if (!isWin) { try { fs.chmodSync(script, 0o755); } catch {} }
+
+  if (mode === 'terminal') {
+    if (isWin) {
+      const pwsh = pickPwsh();
+      const cmdExe = process.env.Comspec || 'cmd.exe';
+      const line = [
+        'start', '"Omni-IRC Setup"',
+        `"${pwsh}"`, '-NoLogo','-NoProfile','-ExecutionPolicy','Bypass','-NoExit',
+        '-File', `"${script}"`
+      ].join(' ');
+      const child = spawn(cmdExe, ['/d','/s','/c', line], {
+        cwd, env, windowsHide: false, detached: true, stdio: 'ignore', windowsVerbatimArguments: true
+      });
+      child.unref();
+      return true;
+    }
+
+    if (process.platform === 'darwin') {
+      // 1) Ensure a fresh log file and start the bootstrap in BACKGROUND (it will write to this log).
+      //    (Background mode below truncates bootstrap.log each run.)
+      await runBootstrap({ mode: 'background' });
+
+      // 2) Create a small .command that tails the log and exits when the bootstrap finishes.
+      const logPath = path.join(app.getPath('userData'), 'bootstrap.log');
+      const tmpCmd  = path.join(app.getPath('userData'), `tail-bootstrap-${Date.now()}.command`);
+      const tailScript = `#!/bin/sh
+LOG="${logPath}"
+clear
+echo "Following install log:"
+echo "  $LOG"
+echo
+# Tail from the beginning (-n +1) and *exit* when the background run logs a success or error sentinel.
+/usr/bin/tail -n +1 -F "$LOG" | /usr/bin/awk '{ print; fflush(); if ($0 ~ /^✔ bootstrap completed successfully$/ || $0 ~ /^✘ bootstrap exited with code /) exit }'
+echo
+echo "*** Omni-IRC bootstrap finished. Press Return to close... ***"
+read -r _
+`;
+      try { fs.writeFileSync(tmpCmd, tailScript, { mode: 0o755 }); } catch {}
+      const child = spawn('open', ['-a', 'Terminal', tmpCmd], { detached: true, stdio: 'ignore' });
+      child.unref();
+      // Best-effort cleanup
+      setTimeout(() => { try { fs.unlinkSync(tmpCmd); } catch {} }, 10 * 60 * 1000);
+      return true;
+    }
+
+    // Linux
+    const t = findTerminalOnLinux(cwd, script);
+    if (!t) throw new Error('No terminal emulator found (x-terminal-emulator, gnome-terminal, konsole, xfce4-terminal, xterm, alacritty, kitty).');
+    const child = spawn(t.cmd, t.args, { detached: true, stdio: 'ignore' });
+    child.unref();
+    return true;
   }
 
-  const script = assetPath('bin', 'bootstrap.ps1');
-  sendBootstrapLog(`[bootstrap] looking for script at: ${script}\n`);
-  if (!require('fs').existsSync(script)) {
-    sendBootstrapLog(`✘ bootstrap.ps1 not found at ${script}\n`);
-    throw new Error('bootstrap.ps1 missing');
-  }
-
+  // --- background mode (unchanged) ---
+  if (bootstrapChild && !bootstrapChild.killed) { try { bootstrapChild.kill(); } catch {} bootstrapChild = null; }
+  // Fresh log every run
   bootstrapLogPath = path.join(app.getPath('userData'), 'bootstrap.log');
   try {
-    require('fs').mkdirSync(path.dirname(bootstrapLogPath), { recursive: true });
-    require('fs').writeFileSync(bootstrapLogPath, `# Omni-IRC bootstrap log — ${new Date().toISOString()}\n`);
+    fs.mkdirSync(path.dirname(bootstrapLogPath), { recursive: true });
+    // Truncate + header
+    fs.writeFileSync(bootstrapLogPath, `# Omni-IRC bootstrap log — ${new Date().toISOString()}\n`);
   } catch {}
 
-  const cwd = app.isPackaged ? process.resourcesPath : app.getAppPath();
-  const env = { ...process.env, OPAMYES: '1' };
-
-  if (process.platform === 'win32') {
+  if (isWin) {
     const pwsh = pickPwsh();
     const args = ['-NoLogo','-NoProfile','-ExecutionPolicy','Bypass','-File', script];
     sendBootstrapLog(`[bootstrap] pwsh: ${pwsh}\n[bootstrap] cwd: ${cwd}\n[bootstrap] args: ${args.join(' ')}\n`);
     bootstrapChild = spawn(pwsh, args, { cwd, env, windowsHide: true });
   } else {
-    // non-Windows: merge stderr and stdout
-    const cmd = `exec "${script.replace(/"/g, '\\"')}" 2>&1`;
+    // Unix: run script, capture both stdout/stderr
+    const cmd = `exec ${quote(script)} 2>&1`;
     bootstrapChild = spawn('sh', ['-c', cmd], { cwd, env });
   }
 
   sendBootstrapLog('[bootstrap] spawned\n');
-
+  // Pipe all output to the log file and to the UI stream.
+  const logStream = (() => {
+    try { return fs.createWriteStream(bootstrapLogPath, { flags: 'a' }); } catch { return null; }
+  })();
+  const pipeChunk = (buf) => {
+    const s = String(buf);
+    if (logStream) { try { logStream.write(s); } catch {} }
+    sendToAll('bootstrap:log', s);
+  };
   bootstrapChild.stdout?.setEncoding('utf8');
   bootstrapChild.stderr?.setEncoding('utf8');
-
-  bootstrapChild.stdout?.on('data', (chunk) => sendBootstrapLog(String(chunk)));
-  bootstrapChild.stderr?.on('data', (chunk) => sendBootstrapLog(String(chunk)));
-
-  bootstrapChild.on('error', (err) => {
-    sendBootstrapLog(`\n✘ Failed to start bootstrap: ${err.message}\n`);
-    for (const w of BrowserWindow.getAllWindows()) w.webContents.send('bootstrap:error', -1);
-  });
-
+  bootstrapChild.stdout?.on('data', pipeChunk);
+  bootstrapChild.stderr?.on('data', pipeChunk);
+  bootstrapChild.on('error', (err) => { sendBootstrapLog(`\n✘ Failed to start bootstrap: ${err.message}\n`); sendToAll('bootstrap:error', -1); });
   bootstrapChild.on('close', (code) => {
-    if (code === 0) {
-      sendBootstrapLog('\n✔ bootstrap completed successfully\n');
-      for (const w of BrowserWindow.getAllWindows()) w.webContents.send('bootstrap:done');
-    } else {
-      sendBootstrapLog(`\n✘ bootstrap exited with code ${code}\n`);
-      for (const w of BrowserWindow.getAllWindows()) w.webContents.send('bootstrap:error', code ?? 1);
-    }
+    if (code === 0) { sendBootstrapLog('\n✔ bootstrap completed successfully\n'); sendToAll('bootstrap:done'); }
+    else { sendBootstrapLog(`\n✘ bootstrap exited with code ${code}\n`); sendToAll('bootstrap:error', code ?? 1); }
     bootstrapChild = null;
+    try { logStream?.end(); } catch {}
   });
 
   return true;
 }
 
-// IPC endpoints used by preload/installer.html
-ipcMain.handle('bootstrap:start', async () => startBootstrapRun());
-ipcMain.handle('bootstrap:runTerminal', async () => runBootstrapInTerminal());
-ipcMain.handle('bootstrap:openLogs', async () => {
-  if (!bootstrapLogPath) bootstrapLogPath = path.join(app.getPath('userData'), 'bootstrap.log');
-  try {
-    // open the folder and highlight the file (Windows), or just open the dir
-    if (process.platform === 'win32') shell.showItemInFolder(bootstrapLogPath);
-    else shell.openPath(path.dirname(bootstrapLogPath));
-  } catch {}
-  return true;
-});
 
-async function ensureBackendReadyAtStartup() {
-  if (await backendReady()) return true;
-
-  // no backend → show installer window and kick off bootstrap
-  createInstallerWindow();
-
-  ipcMain.on('bootstrap:proceed-if-ready', async () => {
-    if (await backendReady()) {
-      installerWin?.close(); installerWin = null;
-      createWindow(); buildMenu(); setupTrayAndIpc();
-    } else {
-      installerWin?.webContents.send('bootstrap:log', '\nBackend not detected yet. Fix errors and Retry.\n');
-    }
-  });
-
-  // Do NOT auto-run anymore; we wait for the user to click "Run in PowerShell".
-  installerWin.webContents.once('did-finish-load', () => {
-    try { installerWin.show(); } catch {}
-  });
-
-  // make sure it's visible
-  try { installerWin.show(); } catch {}
-
-  return false;
-}
-
-// sessions
+/* =============================================================================
+   Session Manager
+============================================================================= */
 async function startSession(sessionId, opts) {
   const { env, exe } = await ensureClientBinary();
-  const port = await getFreePort();
+  const sessionKey = canonicalSessionKey(opts);
 
-  const args = [
-    '--server', opts.server,
-    '--port', String(opts.ircPort),
-    '--nick', opts.nick,
-    '--realname', opts.realname
-  ];
+  // Only prevent duplicates on Unix (Windows loopback allows multiple)
+  if (!isWin) {
+    for (const s of sessions.values()) {
+      if (s.sessionKey === sessionKey) throw new Error(`Already connected as ${sessionKey}`);
+    }
+  }
+
+  // Base CLI args
+  const args = ['--server', opts.server, '--port', String(opts.ircPort), '--nick', opts.nick, '--realname', opts.realname];
   if (opts.tls) args.push('--tls');
+  if (opts.tls && String(opts.ircPort) === '6667') args[args.indexOf('--port') + 1] = '6697';
+  if (!opts.tls && String(opts.ircPort) === '6697') args.push('--tls');
 
-  if (opts.tls && String(opts.ircPort) === '6667') {
-    args[args.indexOf('--port') + 1] = '6697';
+  // UI transport
+  let connectSpec = null;
+  let unixSockPath = null;
+
+  if (isWin) {
+    const port = await getFreePort();
+    args.push('--ui', 'loopback', '--socket', String(port));
+    env.OMNI_IRC_PORT = String(port);
+    connectSpec = { host: '127.0.0.1', port };
+  } else {
+    unixSockPath = deriveUnixSocketPath(sessionKey);
+    await ensureUnixSocketFree(unixSockPath);
+    args.push('--ui', 'headless', '--socket', unixSockPath);
+    env.OMNI_IRC_SOCKET = unixSockPath;
+    connectSpec = { path: unixSockPath };
   }
-  if (!opts.tls && String(opts.ircPort) === '6697') {
-    args.push('--tls');
-  }
 
-  args.push('--ui', 'loopback', '--socket', String(port));
-  env.OMNI_IRC_PORT = String(port);
-
-  BrowserWindow.getAllWindows().forEach(w =>
-    w.webContents.send('backend-log', `[spawn][${sessionId}] ${exe} ${args.join(' ')}`));
-
+  sendToAll('backend-log', `[spawn][${sessionId}] ${exe} ${args.join(' ')}`);
   const child = spawn(exe, args, { env, windowsHide: true });
   pipeChildLogs(child);
 
+  // Connect to UI pipe
   let sock, rl;
   try {
-    const { sock: s } = await new Promise((resolve, reject) => {
+    sock = await new Promise((resolve, reject) => {
       const deadline = Date.now() + 15000;
       const tryConnect = () => {
-        const c = net.createConnection({ host: '127.0.0.1', port });
-        c.once('connect', () => resolve({ sock: c }));
+        const c = net.createConnection(connectSpec);
+        c.once('connect', () => resolve(c));
         c.once('error', () => {
           c.destroy();
           if (Date.now() > deadline) return reject(new Error('loopback connect timeout'));
@@ -440,7 +503,6 @@ async function startSession(sessionId, opts) {
       };
       tryConnect();
     });
-    sock = s;
   } catch (e) {
     killChild(child);
     throw e;
@@ -451,30 +513,20 @@ async function startSession(sessionId, opts) {
   sock.setNoDelay(true);
 
   rl = readline.createInterface({ input: sock, crlfDelay: Infinity });
-  rl.on('line', (line) => {
-    BrowserWindow.getAllWindows().forEach(w =>
-      w.webContents.send('session:data', { id: sessionId, line })
-    );
-  });
-  sock.on('error', (err) => {
-    BrowserWindow.getAllWindows().forEach(w =>
-      w.webContents.send('session:error', { id: sessionId, message: err.message })
-    );
-  });
+  rl.on('line', (line) => sendToAll('session:data', { id: sessionId, line }));
+  sock.on('error', (err) => sendToAll('session:error', { id: sessionId, message: err.message }));
   child.on('close', (code) => {
-    BrowserWindow.getAllWindows().forEach(w =>
-      w.webContents.send('session:status', { id: sessionId, status: 'stopped', code })
-    );
+    sendToAll('session:status', { id: sessionId, status: 'stopped', code });
     try { rl?.close(); } catch {}
     try { sock?.destroy(); } catch {}
+    if (unixSockPath) { try { fs.unlinkSync(unixSockPath); } catch {} }
     sessions.delete(sessionId);
   });
 
-  sessions.set(sessionId, { child, env, exe, port, sock, rl, opts });
-  BrowserWindow.getAllWindows().forEach(w =>
-    w.webContents.send('session:status', { id: sessionId, status: 'running' })
-  );
-  return { id: sessionId, port };
+  sessions.set(sessionId, { child, env, exe, sock, rl, opts, unixSockPath, sessionKey });
+  sendToAll('session:status', { id: sessionId, status: 'running' });
+
+  return { id: sessionId, socket: unixSockPath || `${connectSpec.host}:${connectSpec.port}` };
 }
 async function stopSession(sessionId) {
   const s = sessions.get(sessionId);
@@ -483,22 +535,20 @@ async function stopSession(sessionId) {
   try { s.rl?.close(); } catch {}
   try { s.sock?.destroy(); } catch {}
   killChild(s.child);
+  if (s.unixSockPath) { try { fs.unlinkSync(s.unixSockPath); } catch {} }
   sessions.delete(sessionId);
-  BrowserWindow.getAllWindows().forEach(w =>
-    w.webContents.send('session:status', { id: sessionId, status: 'stopped' })
-  );
+  sendToAll('session:status', { id: sessionId, status: 'stopped' });
 }
 async function restartSession(sessionId, opts) {
   await stopSession(sessionId);
   return startSession(sessionId, opts);
 }
 
-// windows / menu
+/* =============================================================================
+   Windows / Menu / Tray
+============================================================================= */
 function createWindow() {
-  const iconWinLinux = process.platform === 'win32'
-    ? assetPath('build', 'icons', 'icon.ico')
-    : assetPath('build', 'icons', 'png', 'icon.png');
-
+  const iconWinLinux = isWin ? assetPath('build', 'icons', 'icon.ico') : assetPath('build', 'icons', 'png', 'icon.png');
   mainWin = new BrowserWindow({
     width: 1480,
     height: 1000,
@@ -508,18 +558,18 @@ function createWindow() {
     icon: process.platform === 'darwin' ? undefined : iconWinLinux,
     webPreferences: {
       preload: path.join(app.getAppPath(), 'preload.cjs'),
-      contextIsolation: true, nodeIntegration: false
+      contextIsolation: true,
+      nodeIntegration: false
     }
   });
-
   if (process.platform === 'darwin') {
-    const icns = assetPath('build', 'icons', 'icon.icns');
+    const icns = assetPath('build', 'icons');
     const nimg = nativeImage.createFromPath(icns);
     if (!nimg.isEmpty()) app.dock.setIcon(nimg);
   }
-
   mainWin.loadFile('index.html');
 }
+
 function buildMenu() {
   const tpl = [
     { label: 'Window', submenu: [{ role: 'minimize' }, { role: 'close' }]},
@@ -528,19 +578,19 @@ function buildMenu() {
   Menu.setApplicationMenu(Menu.buildFromTemplate(tpl));
 }
 
-let tray;
-function setupTrayAndIpc() {
-  // tray
-  const trayIconPath = process.platform === 'win32'
-    ? assetPath('build', 'icons', 'icon.ico')
-    : assetPath('build', 'icons', 'png', 'icon.png');
-
+function setupTray() {
+  const trayIconPath = isWin ? assetPath('build', 'icons', 'icon.ico') : assetPath('build', 'icons', 'png', 'icon.png');
   try {
     tray = new Tray(trayIconPath);
     tray.setToolTip('Omni Chat');
   } catch {}
+}
 
-  // sessions IPC
+/* =============================================================================
+   IPC Wiring
+============================================================================= */
+function setupIPC() {
+  // Sessions
   ipcMain.handle('session:start', async (_e, id, opts) => startSession(id || genId(), opts));
   ipcMain.handle('session:stop',  async (_e, id)       => stopSession(id));
   ipcMain.handle('session:restart', async (_e, id, opts) => restartSession(id, opts));
@@ -554,14 +604,58 @@ function setupTrayAndIpc() {
   // UI pub/sub
   ipcMain.on('ui-pub', (_e, { event, payload }) => {
     if (!event) return;
-    BrowserWindow.getAllWindows().forEach(w => w.webContents.send(`ui-sub:${event}`, payload));
+    sendToAll(`ui-sub:${event}`, payload);
+  });
+
+  // Bootstrap
+  ipcMain.handle('bootstrap:runTerminal', async () => runBootstrap({ mode: 'terminal' }));
+  ipcMain.handle('bootstrap:start',       async () => runBootstrap({ mode: 'background' }));
+  ipcMain.handle('bootstrap:openLogs',    async () => { await shell.openPath(app.getPath('userData')); return true; });
+  ipcMain.on('bootstrap:proceed-if-ready', async () => {
+    if (await backendReady()) {
+      try { installerWin?.close(); } catch {}
+      createWindow(); buildMenu(); setupTray();
+    } else {
+      sendToAll('bootstrap:log', 'Backend still not ready.\n');
+    }
   });
 }
 
-// app boot
+/* =============================================================================
+   Installer Window (first-run)
+============================================================================= */
+function createInstallerWindow() {
+  installerWin = new BrowserWindow({
+    width: 880,
+    height: 600,
+    title: 'Omni Chat – First-time Setup',
+    resizable: true,
+    webPreferences: {
+      preload: path.join(app.getAppPath(), 'preload.cjs'),
+      contextIsolation: true,
+      nodeIntegration: false
+    }
+  });
+  installerWin.loadFile(path.join(app.getAppPath(), 'renderer', 'installer.html'));
+}
+
+/* =============================================================================
+   Boot
+============================================================================= */
+async function ensureBackendReadyAtStartup() {
+  const ok = await backendReady();
+  if (ok) return true;
+  // show installer; bootstrap IPC already wired in setupIPC()
+  createInstallerWindow();
+  return false;
+}
+
 app.whenReady().then(async () => {
+  // Make brew/macports visible when launched from Finder
+  seedUnixPath(process.env);
+  setupIPC();
   const ok = await ensureBackendReadyAtStartup();
-  if (ok) { createWindow(); buildMenu(); setupTrayAndIpc(); }
+  if (ok) { createWindow(); buildMenu(); setupTray(); }
 });
 
 app.on('before-quit', async () => {

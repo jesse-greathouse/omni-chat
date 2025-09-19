@@ -61,10 +61,11 @@
 
   <main>
     <div style="padding:16px;">
-      <p>This will open a PowerShell window and run the backend bootstrap. It will close
+      <p>This will open a Terminal window and run the backend bootstrap. It will close
       automatically on success. If something fails, the window will show an error and wait
       for you to press Enter.</p>
     </div>
+    <pre id="log" style="margin:0;padding:14px 18px;white-space:pre-wrap;overflow:auto;height:60vh;"></pre>
     <div class="actions">
       <button id="btnRun">Install Ocaml Backend</button>
       <button id="btnOpenLogs">Open logs folder</button>
@@ -81,6 +82,13 @@
     var btnGo   = document.getElementById('btnProceed');
 
     if (!window.bootstrap) { console.error('preload missing'); return; }
+    var logEl   = document.getElementById('log');
+    function appendLog(s){ if(!logEl) return; logEl.textContent += String(s); logEl.scrollTop = logEl.scrollHeight; }
+
+    // subscribe to background-mode logs (mac auto-tail + background run)
+    var offLog = window.bootstrap.onLog(function(line){ appendLog(line); });
+    var offDone = window.bootstrap.onDone(function(){ statusEl.textContent = 'ok'; statusEl.classList.add('ok'); });
+    var offErr  = window.bootstrap.onError(function(code){ statusEl.textContent = 'error'; statusEl.classList.add('err'); appendLog('\\n[bootstrap] exited with code '+code+'\\n'); });
 
     btnRun.addEventListener('click', function () {
       statusEl.textContent = 'running…';

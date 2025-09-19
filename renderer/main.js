@@ -3,15 +3,14 @@ import { setupIngest } from './irc/ingest.js';
 import { ErrorDock } from './ui/ErrorDock.js';
 import { createProfilesPanel } from './ui/connectionForm.js';
 
-window.addEventListener('error',  e => errors.append(`[renderer] ${e.message}`));
-window.addEventListener('unhandledrejection', e => errors.append(`[promise] ${e.reason?.message || e.reason}`));
-
 uiRefs.viewsEl      = document.getElementById('views');
 uiRefs.errorDockEl  = document.getElementById('errorDock');
 uiRefs.toggleErrBtn = document.getElementById('toggleErrors');
 
 const tabbarEl   = document.getElementById('tabbar');
 const errors     = new ErrorDock(uiRefs.errorDockEl, uiRefs.toggleErrBtn);
+window.addEventListener('error',  e => errors.append(`[renderer] ${e.message}`));
+window.addEventListener('unhandledrejection', e => errors.append(`[promise] ${e.reason?.message || e.reason}`));
 
 let activeSessionId = null;
 const tabs = new Map(); // id -> { id, title, layerEl, netId? }

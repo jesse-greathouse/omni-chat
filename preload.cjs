@@ -59,7 +59,19 @@ contextBridge.exposeInMainWorld('sessions', {
   send: (id, line) => ipcRenderer.send('session:send', { id, line }),
 
   // events (all carry { id, ... })
-  onData:   (cb) => ipcRenderer.on('session:data',   (_e, payload) => cb(payload)),
-  onStatus: (cb) => ipcRenderer.on('session:status', (_e, payload) => cb(payload)),
-  onError:  (cb) => ipcRenderer.on('session:error',  (_e, payload) => cb(payload)),
+  onData:   (cb) => {
+    const fn = (_e, payload) => cb(payload);
+    ipcRenderer.on('session:data', fn);
+    return () => ipcRenderer.off('session:data', fn);
+  },
+  onStatus: (cb) => {
+    const fn = (_e, payload) => cb(payload);
+    ipcRenderer.on('session:status', fn);
+    return () => ipcRenderer.off('session:status', fn);
+  },
+  onError:  (cb) => {
+    const fn = (_e, payload) => cb(payload);
+    ipcRenderer.on('session:error', fn);
+    return () => ipcRenderer.off('session:error', fn);
+  },
 });

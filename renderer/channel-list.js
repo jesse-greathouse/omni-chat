@@ -49,6 +49,7 @@ function render() {
     tdName.appendChild(btn);
 
     const tdUsers = document.createElement('td');
+    tdUsers.className = 'num';
     tdUsers.textContent = String(users);
 
     const tdTopic = document.createElement('td');

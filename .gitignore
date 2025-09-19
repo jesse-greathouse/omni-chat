@@ -14,7 +14,8 @@ report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
 
 # .dist
 .dist*
-
+.DS_Store
+lock
 
 # Runtime data
 pids

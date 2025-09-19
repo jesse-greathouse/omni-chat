@@ -1,0 +1,118 @@
+#!/usr/bin/env perl
+use strict;
+use warnings;
+use File::Path qw(remove_tree);
+
+# Hard-reset OPAM on Unix-like systems (user scope)
+# - Removes all opam switches (if opam is present)
+# - Deletes OPAM root and OPAM cache (~/.cache/opam or $XDG_CACHE_HOME/opam)
+# - Deletes cached omni-irc sources
+# - Prints final status
+#
+# NOTE: This does NOT uninstall the 'opam' program itself (brew/apt/pkg).
+
+$ENV{OPAMYES}  = '1';
+$ENV{OPAMROOT} = $ENV{OPAMROOT} || '';  # we may set it after we detect the real root
+
+# Clear env vars in THIS process so any opam calls below aren't confused
+delete @ENV{qw(
+  OPAMSWITCH OPAMREPOSITORY OCAMLLIB OCAMLPATH CAML_LD_LIBRARY_PATH CAML_LD_LIBRARY_PATH__F
+  OCAML_TOPLEVEL_PATH FLEXLINKFLAGS FLEXDLL_CHAIN MAKE MAKEFLAGS CC CL
+)};
+
+sub have_cmd {
+  my ($t) = @_;
+  return system("command -v $t >/dev/null 2>&1") == 0;
+}
+sub capture_safe {
+  my (@cmd) = @_;
+  open my $fh, "-|", @cmd or return '';
+  local $/;
+  my $out = <$fh>;
+  close $fh;
+  return defined($out) ? $out : '';
+}
+sub run_quiet_ok {
+  my (@cmd) = @_;
+  system(@cmd);
+  return ($? >> 8) == 0;
+}
+sub rm_tree {
+  my ($dir) = @_;
+  return unless defined $dir && length $dir && -d $dir;
+  print "Removing: $dir\n";
+  my $err;                                 # scalar
+  remove_tree($dir, { error => \$err });   # pass scalar ref
+  if ($err && @$err) {                     # now $err is an ARRAY ref
+    print "Some paths could not be removed under: $dir\n";
+    for my $e (@$err) {
+      my ($f, $msg) = %$e;
+      next unless $f;
+      print "  - $f : $msg\n";
+    }
+  }
+}
+
+# 0) Discover OPAM root
+my $opam_present = have_cmd('opam');
+my $root = '';
+if ($opam_present) {
+  my $r = capture_safe('opam', 'var', 'root', '--global');  # avoid local switch oddities
+  $r =~ s/^\s+|\s+$//g;
+  $root = $r if $r;
+}
+$root ||= $ENV{OPAMROOT} || "$ENV{HOME}/.opam";
+
+# Make sure opam subcommands we call use this root (if opam exists)
+$ENV{OPAMROOT} = $root;
+
+my $xdg_cache = $ENV{XDG_CACHE_HOME} && length $ENV{XDG_CACHE_HOME}
+              ? $ENV{XDG_CACHE_HOME}
+              : "$ENV{HOME}/.cache";
+my $opam_cache  = "$xdg_cache/opam";
+my $omni_cache  = "$xdg_cache/omni-irc/src";
+
+print "Uninstalling OPAM data for this user...\n";
+print "Detected OPAM root: $root\n";
+
+# 1) Remove switches (best-effort) if opam is available
+if ($opam_present) {
+  my $list = capture_safe('opam', 'switch', 'list', '--short');
+  my @sw = grep { length } split(/\r?\n/, $list);
+  if (@sw) {
+    for my $s (@sw) {
+      print "Removing switch: $s\n";
+      run_quiet_ok('opam', 'switch', 'remove', '--yes', $s) or print "  (warning) failed to remove $s\n";
+    }
+  } else {
+    print "No switches found under this root.\n";
+  }
+} else {
+  print "opam not found on PATH. Skipping switch removal.\n";
+}
+
+# 2) Delete OPAM root
+if (-d $root) {
+  rm_tree($root);
+} else {
+  print "OPAM root not found (nothing to remove): $root\n";
+}
+
+# 3) Delete OPAM download/cache directory (harmless if empty/missing)
+if (-d $opam_cache) {
+  rm_tree($opam_cache);
+} else {
+  print "OPAM cache not found (nothing to remove): $opam_cache\n";
+}
+
+# 4) Remove cached omni-irc sources
+if (-d $omni_cache) {
+  rm_tree($omni_cache);
+} else {
+  print "omni-irc cache not found (nothing to remove): $omni_cache\n";
+}
+
+print "\nHard reset complete.\n";
+print "Open a NEW shell to ensure a clean environment.\n";
+print "(If you installed opam via Homebrew/apt and want to remove the program itself,\n";
+print " do that with your package manager; this script only wipes user data.)\n";
