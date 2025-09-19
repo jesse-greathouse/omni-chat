@@ -2,125 +2,108 @@
 
 A minimal, multi-platform IRC client.
 **Frontend:** Electron (this repo)
-**Backend:** [`omni-irc`](https://github.com/jesse-greathouse/omni-irc) OCaml client, exposed via a local “loopback” UI socket that the Electron app connects to.
+**Backend:** [`omni-irc`](https://github.com/jesse-greathouse/omni-irc) (OCaml), exposed over a local “loopback” UI socket.
 
-> On Windows, we assume PowerShell and `opam` (2.2+) are available. macOS/Linux instructions are included too.
+> **Windows-first**: the app now guides you through installing the OCaml backend by opening a real PowerShell terminal and running a bundled bootstrap script. macOS/Linux notes are below.
 
 ---
 
-## ✨ Quick Start (Windows PowerShell)
+## 🚀 First run (Windows — no manual `opam` commands)
+
+1. **Install prerequisites (once):**
+
+   * **opam 2.2+** for Windows (and **git** on PATH).
+
+2. **Run Omni Chat** (packaged app or from source with `npm run start`).
+
+3. On first launch you’ll see the **installer screen**. Click **“Run in PowerShell”**.
+
+   * A real PowerShell window opens and runs `bootstrap.ps1`.
+   * You’ll **see everything live** (clone, opam switch, pins, builds).
+   * On success it prints a big green banner:
+
+     ```sh
+     *******************************************************************
+     *  Omni-IRC bootstrap is COMPLETE. You can now close this window. *
+     *******************************************************************
+     ```
+
+4. Close the PowerShell window, then click **“Launch App”** in the installer.
+
+That’s it. The Electron UI will detect the backend binary and connect.
+
+### What the bootstrap does
+
+* Creates/uses `OPAMROOT` under `%LOCALAPPDATA%\opam`
+* Ensures the `default` opam repo is registered (repairs stale repo dirs)
+* Creates/uses switch **`omni-irc-dev`** (prefers **mingw** toolchain on Windows)
+* Pins the `omni-irc` packages from GitHub at a **locked tag**
+* Installs `yojson` (workaround for a UI dep)
+* Installs **`omni-irc-client`** and prints its location
+* Shows the big **complete** banner when done
+
+If opam or git are missing, the script stops early with a clear message.
+
+> You can always click **“Open logs folder”** in the installer to see `bootstrap.log`.
+
+---
+
+## 🧭 Normal usage
+
+* **Start the app** (packaged or `npm run start`).
+* Configure **Global Defaults** (nick/realname) and **Server Profiles**.
+* Click **Connect** to open a tab and start a session.
+* The app spawns `omni-irc-client` with `--ui loopback` and connects to it.
+
+The app searches for the backend in this order:
+
+1. Local build at `../omni-irc/_build/install/default/bin/omni-irc-client(.exe)`
+2. `opam var bin` for the **`omni-irc-dev`** switch
+3. The system `PATH`
+4. Or you can override explicitly with env var:
+
+   ```sh
+   set OMNI_IRC_CLIENT=C:\path\to\omni-irc-client.exe
+   ```
+
+---
+
+## 🧑‍💻 Developing / running from source
 
 ```powershell
-# Clone the Electron app
 git clone https://github.com/jesse-greathouse/omni-chat.git
 cd omni-chat
-
-# Install Node deps
 npm install
-
-# Install OCaml backend via opam (creates switch "omni-irc-dev")
-#    You only need to do this once.
-opam init -y                       # (if you haven't already)
-opam switch create omni-irc-dev ocaml-base-compiler.5.3.0
-opam switch set omni-irc-dev
-opam update
-
-# Option A: install from GitHub (recommended for users)
-opam pin add omni-irc https://github.com/jesse-greathouse/omni-irc.git#main -y
-# The pin brings in packages; now install the client binary:
-opam install -y omni-irc-client
-
-# Option B: local dev checkout (recommended for contributors)
-# (in a sibling folder to omni-chat)
-#   cd ..
-#   git clone https://github.com/jesse-greathouse/omni-irc.git
-#   cd omni-irc
-#   opam install -y . --deps-only
-#   dune build @install
-# Electron will auto-detect the built client in omni-irc/_build/install/...
-
-# 3) Run the app
-cd ..\omni-chat
 npm run start
 ```
 
-That’s it. The Electron app will:
+First run shows the installer. Click **“Run in PowerShell”** and follow the steps above.
 
-* resolve the `opam` environment for the `omni-irc-dev` switch,
-* locate the `omni-irc-client(.exe)` binary (from `opam var bin` **or** from a local `omni-irc/_build/...`),
-* spawn the client with the loopback UI socket,
-* connect the UI.
+### Packaging (Windows)
 
----
+We ship the bootstrap with the app:
 
-## Why the `omni-irc-dev` switch?
+* `package.json` includes `build.extraResources: [{ from: "bin/", to: "bin/" }]`
+* `npm run pack:win` passes `--extra-resource=bin`
 
-The app (see `main.js`) calls:
-
-* `opam env --switch=omni-irc-dev --set-switch`
-* `opam var bin`
-
-and then looks for `omni-irc-client(.exe)` in that switch. Creating that specific switch keeps the setup predictable across dev machines.
-
-If you **must** use a different switch, change the hardcoded `'omni-irc-dev'` in `main.js` (function `resolveOpamEnv`) to your switch name.
+So the packaged app has `resources\bin\bootstrap.ps1`.
 
 ---
 
-## Installing the OCaml backend
+## 🛠️ Advanced: local backend checkout (dev loop)
 
-You have two routes. Either is fine; the Electron app supports both.
-
-### Option A: Install from GitHub (pin)
-
-**PowerShell (Windows):**
-
-```powershell
-opam init -y
-opam switch create omni-irc-dev ocaml-base-compiler.5.3.0
-opam switch set omni-irc-dev
-opam update
-
-# Bring the packages in via a pinned repo
-opam pin add omni-irc https://github.com/jesse-greathouse/omni-irc.git#main -y
-
-# Ensure system deps (optional; depext may be limited on Windows)
-# opam install -y opam-depext
-# opam depext -y omni-irc-client
-
-# Install the client binary
-opam install -y omni-irc-client
-```
-
-**macOS/Linux (bash/zsh):**
-
-```bash
-opam init -y
-opam switch create omni-irc-dev ocaml-base-compiler.5.3.0
-opam switch set omni-irc-dev
-opam update
-
-opam pin add omni-irc https://github.com/jesse-greathouse/omni-irc.git#main -y
-opam install -y opam-depext
-opam depext -y omni-irc-client
-opam install -y omni-irc-client
-```
-
-This produces an `omni-irc-client` binary in `$(opam var bin)` for that switch (on Windows it’s `omni-irc-client.exe`). The Electron app will find it automatically.
-
-### Option B: Local dev checkout (side-by-side)
-
-Place `omni-irc` **next to** this repo:
+If you’re hacking on the OCaml repo:
 
 ```sh
 parent/
 ├─ omni-chat/   # this repo
-└─ omni-irc/    # local backend checkout
+└─ omni-irc/    # backend
 ```
 
-Then:
+Build the backend:
 
 ```powershell
-# Windows PowerShell
+# Ensure a switch
 opam switch create omni-irc-dev ocaml-base-compiler.5.3.0
 opam switch set omni-irc-dev
 opam update
@@ -130,157 +113,45 @@ opam install -y . --deps-only
 dune build @install
 ```
 
-Electron checks:
+The Electron app will auto-detect:
 
 ```sh
-<omni-chat app folder>/../omni-irc/_build/install/default/bin/omni-irc-client(.exe)
-```
-
-If present, it will use this local build—great for tight inner-loop development.
-
----
-
-## Running the Electron app
-
-```powershell
-# In the omni-chat repo
-npm install
-npm run start
-```
-
-### What happens under the hood
-
-* The app resolves `opam` env for the `omni-irc-dev` switch in a Windows-friendly way (parsing the `set VAR=...` output).
-* It finds `omni-irc-client(.exe)` via:
-
-  1. local `../omni-irc/_build/install/default/bin/`,
-  2. `opam var bin`,
-  3. or falls back to `PATH`.
-* It spawns the client like:
-
-  ```sh
-  omni-irc-client --server irc.libera.chat --port 6697 --tls \
-                  --nick <nick> --realname <real> \
-                  --ui loopback --socket <random_port>
-  ```
-
-* The UI connects to that loopback socket and renders channels/messages.
-
-You can override the binary explicitly:
-
-```powershell
-$env:OMNI_IRC_CLIENT="C:\path\to\custom\omni-irc-client.exe"
-npm run start
+../omni-irc/_build/install/default/bin/omni-irc-client(.exe)
 ```
 
 ---
 
-## Configuring servers and identity
+## 🍎🐧 macOS / Linux
 
-The app stores settings via `electron-store` in `omni-chat.json`. From the UI:
-
-* Set **Global Defaults** (Nick, Realname).
-* Add **Server Profiles** (host/port/TLS; optional overrides for nick/realname).
-* Click **Connect** to spin up a tab + session.
-
-Defaults include Libera at `6697` (TLS on).
-
----
-
-## Platform Notes
-
-### Windows (PowerShell)
-
-* Use `opam` 2.2+.
-* The app handles `opam env` → Node env translation automatically—no manual PATH edits needed.
-* TLS is enabled by default in the backend (uses OCaml TLS with CA verification).
-
-### macOS
-
-```bash
-brew install opam     # if you use Homebrew
-```
-
-Then follow the Option A or B steps above.
-
-### Linux
-
-Install `opam` from your distro or from the official installer, then follow the Option A or B steps.
-
----
-
-## Troubleshooting
-
-### “loopback connect timeout” on start
-
-* The backend didn’t start or didn’t open the socket yet.
-* Check the **Errors** toggle (bottom panel) for spawn logs.
-* Verify the binary exists:
-
-  ```powershell
-  opam switch set omni-irc-dev
-  opam var bin
-  # Ensure omni-irc-client(.exe) is present in that bin dir
-  ```
-
-* Try the local build route (Option B) to ensure the binary is there.
-
-### “opam not found” or wrong switch
-
-* Confirm `opam --version` works in PowerShell.
-* Ensure the switch is exactly `omni-irc-dev` or change it in `main.js` (function `resolveOpamEnv`).
-
-### Can’t find the binary even though it’s built
-
-* Point the app directly:
-
-  ```powershell
-  $env:OMNI_IRC_CLIENT="C:\path\to\omni-irc-client.exe"
-  npm run start
-  ```
-
-### TLS/port mismatch auto-fix
-
-* If you choose port 6667 with TLS on (or 6697 with TLS off), the app corrects it for you.
-
----
-
-## Scripts you can copy/paste
-
-### One-shot backend setup (Windows PowerShell, GitHub pin)
-
-```powershell
-opam init -y
-opam switch create omni-irc-dev ocaml-base-compiler.5.3.0
-opam switch set omni-irc-dev
-opam update
-opam pin add omni-irc https://github.com/jesse-greathouse/omni-irc.git#main -y
-opam install -y omni-irc-client
-```
-
-### One-shot backend setup (macOS/Linux, GitHub pin)
+The Windows bootstrap is PowerShell-based and launched by the app. On macOS/Linux, install the backend with `opam` manually (or adapt a shell bootstrap):
 
 ```bash
 opam init -y
 opam switch create omni-irc-dev ocaml-base-compiler.5.3.0
 opam switch set omni-irc-dev
 opam update
-opam pin add omni-irc https://github.com/jesse-greathouse/omni-irc.git#main -y
 opam install -y opam-depext
 opam depext -y omni-irc-client
+opam pin add omni-irc https://github.com/jesse-greathouse/omni-irc.git#main -y
 opam install -y omni-irc-client
 ```
 
-### Local dev checkout (side-by-side, all platforms)
+Then run Omni Chat; it will find the client via `opam var bin`.
 
-```bash
-# create switch
-opam switch create omni-irc-dev ocaml-base-compiler.5.3.0
-opam switch set omni-irc-dev
-opam update
+---
 
-# build local backend
-cd ../omni-irc
-opam install -y . --deps-only
-dune build @install
-```
+## 🧯 Troubleshooting
+
+**“Invalid repository name … repo\default exists”**
+The bootstrap handles this: it removes the stale repo dir or uses `opam repo set-url` as a fallback. If opam is holding a file lock, close other shells/IDEs and re-run.
+
+**“opam not found” / “git not found”**
+Install them and ensure they’re on PATH, then re-run the bootstrap from the installer.
+
+**Loopback connect timeout**
+Open **Errors** in the UI; verify the backend binary exists in `opam var bin` for the `omni-irc-dev` switch, or try the local build route.
+
+**Hard reset (Windows)**
+There’s a helper at `bin\uninstall.ps1` to wipe OPAM root and cached sources for a clean slate.
+
+---
