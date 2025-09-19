@@ -14,11 +14,14 @@
     },
     "linux": {
       "icon": "build/icons/png"
-    }
+    },
+    "extraResources": [
+      { "from": "bin/", "to": "bin/" }
+    ]
   },
   "scripts": {
     "start": "electron .",
-    "pack:win": "electron-packager . OmniChat --platform=win32 --arch=x64 --out=.dist --overwrite --asar --icon=build/icons/icon.ico",
+    "pack:win": "electron-packager . OmniChat --platform=win32 --arch=x64 --out=.dist --overwrite --asar --icon=build/icons/icon.ico --extra-resource=bin",
     "start:verbose": "ELECTRON_ENABLE_LOGGING=1 electron .",
     "test": "echo \"Error: no test specified\" && exit 1"
   },

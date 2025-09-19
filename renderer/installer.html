@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <!-- allow inline scripts now that we're inlining JS -->
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; script-src 'self' 'unsafe-inline'">
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Omni Chat — First-time Setup</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #0b0e14;
+      --fg: #e6e6e6;
+      --muted: #9aa4b2;
+      --accent: #5cc8ff;
+      --ok: #57d68d;
+      --err: #ff6b6b;
+      --panel: #121722;
+    }
+    html, body {
+      margin: 0; padding: 0; height: 100%;
+      background: var(--bg); color: var(--fg);
+      font: 14px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+    }
+    header {
+      padding: 16px 18px; border-bottom: 1px solid #1b2233;
+      display: flex; align-items: center; gap: 8px;
+      background: var(--panel);
+      position: sticky; top: 0; z-index: 2;
+    }
+    header h1 { font-size: 16px; margin: 0; font-weight: 600; }
+    header .status { margin-left: auto; font-weight: 600; }
+    header .status.ok { color: var(--ok); }
+    header .status.err { color: var(--err); }
+    main { height: calc(100% - 58px); display: grid; grid-template-rows: 1fr auto; }
+    pre#log {
+      margin: 0; padding: 14px 18px;
+      overflow: auto; white-space: pre-wrap; word-break: break-word;
+    }
+    .actions {
+      display: flex; gap: 8px; padding: 12px 14px; border-top: 1px solid #1b2233; background: var(--panel);
+    }
+    button {
+      appearance: none; border: 1px solid #2a3448; background: #182035; color: var(--fg);
+      padding: 8px 12px; border-radius: 6px; font-weight: 600; cursor: pointer;
+    }
+    button.primary { border-color: #2e496a; background: #1d3557; }
+    button.success { border-color: #2d5a45; background: #1b3a2e; color: var(--ok); }
+    button:disabled { opacity: .55; cursor: default; }
+    .spacer { flex: 1 1 auto; }
+    .hint { color: var(--muted); margin-left: 8px; }
+    .mono { font-family: inherit; color: var(--accent); }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Setting up Omni-IRC backend</h1>
+    <div class="status" id="status">running…</div>
+  </header>
+
+  <main>
+    <div style="padding:16px;">
+      <p>This will open a PowerShell window and run the backend bootstrap. It will close
+      automatically on success. If something fails, the window will show an error and wait
+      for you to press Enter.</p>
+    </div>
+    <div class="actions">
+      <button id="btnRun">Install Ocaml Backend</button>
+      <button id="btnOpenLogs">Open logs folder</button>
+      <span class="spacer"></span>
+      <button id="btnProceed" class="success">Check & Continue</button>
+    </div>
+  </main>
+
+  <script>
+  (function () {
+    var statusEl= document.getElementById('status');
+    var btnRun  = document.getElementById('btnRun');
+    var btnOpen = document.getElementById('btnOpenLogs');
+    var btnGo   = document.getElementById('btnProceed');
+
+    if (!window.bootstrap) { console.error('preload missing'); return; }
+
+    btnRun.addEventListener('click', function () {
+      statusEl.textContent = 'running…';
+      statusEl.classList.remove('ok','err');
+      window.bootstrap.runInTerminal();
+    });
+    btnOpen.addEventListener('click', function () { window.bootstrap.openLogsDir(); });
+    btnGo.addEventListener('click', function () { window.bootstrap.proceedIfReady(); });
+  })();
+  </script>
+
+</body>
+</html>

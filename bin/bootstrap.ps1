@@ -54,15 +54,41 @@ foreach ($v in 'OCAMLLIB','OCAMLPATH','CAML_LD_LIBRARY_PATH','CAML_LD_LIBRARY_PA
 $Root = Join-Path $env:LOCALAPPDATA "opam"
 if (-not (Test-Path $Root)) { New-Item -ItemType Directory -Path $Root | Out-Null }
 $env:OPAMROOT = $Root
-$env:OPAMYES  = "2"
+$env:OPAMYES  = "1"
 
 if (-not (Test-Path (Join-Path $Root "config"))) {
   Invoke-OpamNoSwitch init --root "$Root" --disable-sandboxing
 }
-$repos = Invoke-OpamNoSwitch repo list --root "$Root" --short 2>$null
-if (-not (($repos -split "`r?`n") -contains 'default')) {
-  Invoke-OpamNoSwitch repo add --root "$Root" default https://opam.ocaml.org --set-default
+
+# repo check/add (handles stale dir)
+$repoDir = Join-Path (Join-Path $Root 'repo') 'default'
+# ask opam which repos are known for this root (may be empty if no switch selected)
+$reposRaw = ''
+try { $reposRaw = Invoke-OpamNoSwitch repo list --root "$Root" --short 2>$null } catch { $reposRaw = '' }
+$haveDefaultListed = (($reposRaw -split "`r?`n") -contains 'default')
+$haveDefaultDir    = Test-Path $repoDir
+
+if (-not $haveDefaultListed) {
+  if ($haveDefaultDir) {
+    Write-Host "Repo dir exists but 'default' is not registered; removing stale dir and re-adding…"
+    try { Remove-Item -LiteralPath $repoDir -Recurse -Force -ErrorAction Stop } catch {
+      Write-Warning "Could not remove stale repo dir at repoDir: $($_.Exception.Message)"
+      Write-Warning "Proceeding to try 'repo set-url' as a fallback."
+      try {
+        Invoke-OpamNoSwitch repo set-url --root "$Root" default https://opam.ocaml.org --set-default
+        $haveDefaultListed = $true
+      } catch {
+        throw "opam repo registration is inconsistent and the stale dir couldn't be removed. Please close shells/IDEs and delete '$repoDir' manually, then re-run."
+      }
+    }
+  }
+  if (-not $haveDefaultListed) {
+    Invoke-OpamNoSwitch repo add --root "$Root" default https://opam.ocaml.org --set-default
+  }
+} else {
+  Write-Host "Default repo already registered."
 }
+
 Write-Host "Updating opam package index…"
 Invoke-OpamNoSwitch update --root "$Root"
 
@@ -86,8 +112,11 @@ if (-not $haveSwitch) {
 
   $want = $Toolchain
   if ($want -eq "auto") {
-    # Auto: prefer mingw on Windows because TLS → Zarith → GMP works there reliably.
-    $want = ($IsWindows) ? "mingw" : "auto"
+    if ($IsWindows) {
+      $want = "mingw"
+    } else {
+      $want = "auto"
+    }
   }
 
   $candidates = New-Object System.Collections.Generic.List[string]
@@ -179,3 +208,7 @@ if (Test-Path $exe) { & $exe --help }
 Write-Host "`nDone. This terminal now has:"
 Write-Host "  OPAMROOT   = $Root"
 Write-Host "  OPAMSWITCH = $Switch"
+Write-Host ""
+Write-Host "*******************************************************************" -ForegroundColor Green
+Write-Host "*  Omni-IRC bootstrap is COMPLETE. You can now close this window. *" -ForegroundColor Green
+Write-Host "*******************************************************************" -ForegroundColor Green

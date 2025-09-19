@@ -1,5 +1,36 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
+contextBridge.exposeInMainWorld('bootstrap', {
+  // run bootstrap.ps1 in a real PowerShell terminal window
+  runInTerminal: () => ipcRenderer.invoke('bootstrap:runTerminal'),
+
+  // start a bootstrap run (invokes PowerShell script)
+  start: () => ipcRenderer.invoke('bootstrap:start'),
+
+  // ask main to open the logs folder (userData path)
+  openLogsDir: () => ipcRenderer.invoke('bootstrap:openLogs'),
+
+  // after success, ask main to verify and launch the main window
+  proceedIfReady: () => ipcRenderer.send('bootstrap:proceed-if-ready'),
+
+  // stream logs / completion / error
+  onLog: (cb) => {
+    const fn = (_e, line) => { try { cb(String(line)); } catch {} };
+    ipcRenderer.on('bootstrap:log', fn);
+    return () => ipcRenderer.off('bootstrap:log', fn);
+  },
+  onDone: (cb) => {
+    const fn = () => { try { cb(); } catch {} };
+    ipcRenderer.on('bootstrap:done', fn);
+    return () => ipcRenderer.off('bootstrap:done', fn);
+  },
+  onError: (cb) => {
+    const fn = (_e, code) => { try { cb(code); } catch {} };
+    ipcRenderer.on('bootstrap:error', fn);
+    return () => ipcRenderer.off('bootstrap:error', fn);
+  }
+});
+
 contextBridge.exposeInMainWorld('omni', {
   // Settings / config access
   getSetting:     (key, fallback) => ipcRenderer.invoke('settings:get', key, fallback),

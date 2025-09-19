@@ -57,8 +57,8 @@ function render() {
     t.textContent = topic || '';
     tdTopic.appendChild(t);
 
-    tr.appendChild(tdName);
     tr.appendChild(tdUsers);
+    tr.appendChild(tdName);
     tr.appendChild(tdTopic);
     frag.appendChild(tr);
   }
