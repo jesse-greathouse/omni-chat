@@ -16,10 +16,10 @@ A minimal, multi-platform IRC client.
 
 2. **Run Omni Chat** (packaged app or from source with `npm run start`).
 
-3. On first launch you’ll see the **installer screen**. Click **“Run in PowerShell”**.
-
-   * A real PowerShell window opens and runs `bootstrap.ps1`.
-   * You’ll **see everything live** (clone, opam switch, pins, builds).
+3. On first launch you’ll see the **installer screen**
+   * Click **“Run in PowerShell”** or manually run from `bin/bootstrap.ps1`
+     * A PowerShell window opens and runs `bootstrap.ps1`.
+   * In PowerShell it will install OCaml, install the `omni-irc-dev` switch (clone, opam switch, pins, builds).
    * On success it prints a big green banner:
 
      ```sh
