@@ -20,7 +20,7 @@ A minimal, multi-platform IRC client.
    * Click **“Run in PowerShell”** or manually run from `bin/bootstrap.ps1`
      * A PowerShell window opens and runs `bootstrap.ps1`.
    * In PowerShell it will install OCaml, install the `omni-irc-dev` switch (clone, opam switch, pins, builds).
-   * On success it prints a big green banner:
+   * On success it prints a big banner:
 
      ```sh
      *******************************************************************
