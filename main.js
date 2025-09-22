@@ -548,7 +548,9 @@ async function restartSession(sessionId, opts) {
    Windows / Menu / Tray
 ============================================================================= */
 function createWindow() {
-  const iconWinLinux = isWin ? assetPath('build', 'icons', 'icon.ico') : assetPath('build', 'icons', 'png', 'icon.png');
+  const iconWinLinux = isWin
+    ? assetPath('build', 'icons', 'icon.ico')
+    : assetPath('build', 'icons', 'png', 'icon.png'); // used on Linux; mac ignores window icon
   mainWin = new BrowserWindow({
     width: 1480,
     height: 1000,
@@ -562,11 +564,6 @@ function createWindow() {
       nodeIntegration: false
     }
   });
-  if (process.platform === 'darwin') {
-    const icns = assetPath('build', 'icons');
-    const nimg = nativeImage.createFromPath(icns);
-    if (!nimg.isEmpty()) app.dock.setIcon(nimg);
-  }
   mainWin.loadFile('index.html');
 }
 
@@ -579,7 +576,15 @@ function buildMenu() {
 }
 
 function setupTray() {
-  const trayIconPath = isWin ? assetPath('build', 'icons', 'icon.ico') : assetPath('build', 'icons', 'png', 'icon.png');
+  // Use resourcesPath when packaged; dev path otherwise
+  const trayIconPath = (() => {
+    if (process.platform === 'darwin') {
+      // we shipped PNGs under Resources/icons/png via extraResources
+      return assetPath('icons', 'png', 'omnichat_32.png');
+    }
+    if (isWin) return assetPath('build', 'icons', 'icon.ico');
+    return assetPath('build', 'icons', 'png', 'icon.png');
+  })();
   try {
     tray = new Tray(trayIconPath);
     tray.setToolTip('Omni Chat');

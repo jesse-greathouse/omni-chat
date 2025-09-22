@@ -6,17 +6,18 @@
   "type": "module",
   "build": {
     "appId": "com.example.omni-chat",
-    "mac": { "icon": "build/icons/icon.ico" },
+    "mac": { "icon": "build/icons/omnichat.icns" },
     "win": { "icon": "build/icons/icon.ico" },
     "linux": { "icon": "build/icons/png" },
     "extraResources": [
-      { "from": "bin/", "to": "bin/" }
+      { "from": "bin/", "to": "bin/" },
+      { "from": "build/icons/png", "to": "icons/png" }
     ]
   },
   "scripts": {
     "start": "electron .",
     "pack:win": "electron-packager . OmniChat --platform=win32 --arch=x64 --out=.dist --overwrite --asar --icon=build/icons/icon.ico --extra-resource=bin",
-    "pack:mac": "electron-packager . OmniChat --platform=darwin --arch=x64,arm64 --out=.dist --overwrite --asar --icon=build/icons/icon.ico --extra-resource=bin",
+    "pack:mac": "electron-packager . OmniChat --platform=darwin --arch=x64,arm64 --out=.dist --overwrite --asar --icon=build/icons/omnichat.icns --extra-resource=bin --extra-resource=build/icons/png",
     "pack:linux": "electron-packager . OmniChat --platform=linux --arch=x64,arm64 --out=.dist --overwrite --asar --icon=build/icons/png/icon.png --extra-resource=bin",
     "start:verbose": "ELECTRON_ENABLE_LOGGING=1 electron .",
     "test": "echo \"Error: no test specified\" && exit 1"
