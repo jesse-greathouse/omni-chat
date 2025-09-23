@@ -158,14 +158,41 @@ function reconcileClientMessage(msg, net) {
       break;
     }
     case 'user': {
-      const u = msg.user || msg.payload || msg.data;
-      if (u && u.nick) net.userMap.set(u.nick, u);
+      // Accept: {type:'user', user:{...}}  OR  {type:'user', ...topLevelFields}  OR  {type:'user', users:[...]}
+      const candidate =
+        msg.user ?? msg.payload ?? msg.data ?? msg; // fall back to root if needed
+
+      // Normalize to an array of user objects
+      const list = Array.isArray(candidate)
+        ? candidate
+        : (Array.isArray(msg.users) ? msg.users : [candidate]);
+
+      for (const raw of list) {
+        if (!raw || typeof raw !== 'object') continue;
+
+        // Some backends echo "type"/"op" at the top level — strip obvious non-user metadata
+        const { type: _t, op: _op, ...u0 } = raw;
+
+        const key =
+          u0.nick || u0.nickname || u0.name || u0.user || u0.username;
+        if (!key) continue;
+
+        // Merge onto any existing record to preserve previously learned fields
+        const prev = net.userMap.get(key) || {};
+        const u = { ...prev, ...u0, nick: u0.nick || prev.nick || key };
+
+        net.userMap.set(u.nick, u);
+
+        // Let the DM window know (main caches & fans this out per session/peer)
+        try { window.dm.pushUser?.(net.sessionId, u); } catch {}
+      }
       break;
     }
     case 'client_user': {
       if (msg.user && msg.user.nick) {
         net.userMap.set(msg.user.nick, msg.user);
         net.selfNick = msg.user.nick;
+        try { window.dm.pushUser?.(net.sessionId, msg.user); } catch {}
       }
       break;
     }
@@ -173,7 +200,12 @@ function reconcileClientMessage(msg, net) {
       const { old_nick, new_nick } = msg;
       if (old_nick && new_nick) {
         const u = net.userMap.get(old_nick);
-        if (u) { net.userMap.delete(old_nick); net.userMap.set(new_nick, { ...u, nick: new_nick }); }
+        if (u) {
+          const nu = { ...u, nick: new_nick };
+          net.userMap.delete(old_nick);
+          net.userMap.set(new_nick, nu);
+          try { window.dm.pushUser?.(net.sessionId, nu); } catch {}
+        }
         if (net.selfNick && old_nick === net.selfNick) net.selfNick = new_nick;
       }
       break;

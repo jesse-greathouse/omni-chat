@@ -1,91 +1,98 @@
+// preload.cjs
 const { contextBridge, ipcRenderer } = require('electron');
 
+/* helpers */
+function safeOn(channel, cb) {
+  // wrap to avoid unhandled exceptions crossing the bridge
+  const fn = (_e, payload) => { try { cb(payload); } catch {} };
+  ipcRenderer.on(channel, fn);
+  return () => ipcRenderer.off(channel, fn);
+}
+function safeInvoke(channel, ...args) {
+  return ipcRenderer.invoke(channel, ...args);
+}
+function safeSend(channel, payload) {
+  ipcRenderer.send(channel, payload);
+}
+
+/* bootstrap */
 contextBridge.exposeInMainWorld('bootstrap', {
-  // run bootstrap.ps1 in a real PowerShell terminal window
-  runInTerminal: () => ipcRenderer.invoke('bootstrap:runTerminal'),
+  runInTerminal: () => safeInvoke('bootstrap:runTerminal'),
+  start:         () => safeInvoke('bootstrap:start'),
+  openLogsDir:   () => safeInvoke('bootstrap:openLogs'),
+  proceedIfReady:() => safeSend('bootstrap:proceed-if-ready'),
 
-  // start a bootstrap run (invokes PowerShell script)
-  start: () => ipcRenderer.invoke('bootstrap:start'),
-
-  // ask main to open the logs folder (userData path)
-  openLogsDir: () => ipcRenderer.invoke('bootstrap:openLogs'),
-
-  // after success, ask main to verify and launch the main window
-  proceedIfReady: () => ipcRenderer.send('bootstrap:proceed-if-ready'),
-
-  // stream logs / completion / error
-  onLog: (cb) => {
-    const fn = (_e, line) => { try { cb(String(line)); } catch {} };
-    ipcRenderer.on('bootstrap:log', fn);
-    return () => ipcRenderer.off('bootstrap:log', fn);
-  },
-  onDone: (cb) => {
-    const fn = () => { try { cb(); } catch {} };
-    ipcRenderer.on('bootstrap:done', fn);
-    return () => ipcRenderer.off('bootstrap:done', fn);
-  },
-  onError: (cb) => {
-    const fn = (_e, code) => { try { cb(code); } catch {} };
-    ipcRenderer.on('bootstrap:error', fn);
-    return () => ipcRenderer.off('bootstrap:error', fn);
-  }
+  onLog:   (cb) => safeOn('bootstrap:log',   (line) => cb(String(line))),
+  onDone:  (cb) => safeOn('bootstrap:done',  () => cb()),
+  onError: (cb) => safeOn('bootstrap:error', (code) => cb(code)),
 });
 
+/*-- omni--- */
 contextBridge.exposeInMainWorld('omni', {
-  // Settings / config access
-  getSetting:     (key, fallback) => ipcRenderer.invoke('settings:get', key, fallback),
-  setSetting:     (key, value)    => ipcRenderer.invoke('settings:set', key, value),
-  getAllSettings: ()              => ipcRenderer.invoke('settings:all'),
-  getSettingsPath:()              => ipcRenderer.invoke('settings:path'),
+  // Settings
+  getSetting:      (key, fallback) => safeInvoke('settings:get', key, fallback),
+  setSetting:      (key, value)    => safeInvoke('settings:set', key, value),
+  getAllSettings:  ()              => safeInvoke('settings:all'),
+  getSettingsPath: ()              => safeInvoke('settings:path'),
 
-  // Server profiles (global + per-server)
-  profilesList:    ()                        => ipcRenderer.invoke('profiles:list'),
-  profilesUpsert:  (host, profile)           => ipcRenderer.invoke('profiles:upsert', host, profile),
-  profilesDelete:  (host)                    => ipcRenderer.invoke('profiles:delete', host),
-  profilesResolve: (host)                    => ipcRenderer.invoke('profiles:resolve', host), // merged w/ globals
+  // Server profiles
+  profilesList:    ()                          => safeInvoke('profiles:list'),
+  profilesUpsert:  (host, profile)             => safeInvoke('profiles:upsert', host, profile),
+  profilesDelete:  (host)                      => safeInvoke('profiles:delete', host),
+  profilesResolve: (host)                      => safeInvoke('profiles:resolve', host),
 
-  // UI pub/sub (used e.g. by Channel List window to track active session)
-  publishUI: (event, payload) => ipcRenderer.send('ui-pub', { event, payload }),
-  onUI: (event, cb) => ipcRenderer.on(`ui-sub:${event}`, (_e, payload) => cb(payload)),
+  // UI pub/sub
+  publishUI: (event, payload) => {
+    // don’t let arbitrary objects be used as channel suffixes
+    const name = String(event || '');
+    if (!name) return;
+    safeSend('ui-pub', { event: name, payload });
+  },
+  onUI: (event, cb) => {
+    const name = String(event || '');
+    if (!name) return () => {};
+    return safeOn(`ui-sub:${name}`, (payload) => cb(payload));
+  },
 });
 
+/* sessions- */
 contextBridge.exposeInMainWorld('sessions', {
-  // lifecycle
-  start:   (id, opts) => ipcRenderer.invoke('session:start', id, opts),
-  stop:    (id)       => ipcRenderer.invoke('session:stop', id),
-  restart: (id, opts) => ipcRenderer.invoke('session:restart', id, opts),
+  start:   (id, opts) => safeInvoke('session:start', id, opts),
+  stop:    (id)       => safeInvoke('session:stop', id),
+  restart: (id, opts) => safeInvoke('session:restart', id, opts),
 
-  // IO
-  send: (id, line) => ipcRenderer.send('session:send', { id, line }),
+  send: (id, line) => safeSend('session:send', { id, line }),
 
-  // events (all carry { id, ... })
-  onData:   (cb) => {
-    const fn = (_e, payload) => cb(payload);
-    ipcRenderer.on('session:data', fn);
-    return () => ipcRenderer.off('session:data', fn);
-  },
-  onStatus: (cb) => {
-    const fn = (_e, payload) => cb(payload);
-    ipcRenderer.on('session:status', fn);
-    return () => ipcRenderer.off('session:status', fn);
-  },
-  onError:  (cb) => {
-    const fn = (_e, payload) => cb(payload);
-    ipcRenderer.on('session:error', fn);
-    return () => ipcRenderer.off('session:error', fn);
-  },
+  onData:   (cb) => safeOn('session:data',   (payload) => cb(payload)),
+  onStatus: (cb) => safeOn('session:status', (payload) => cb(payload)),
+  onError:  (cb) => safeOn('session:error',  (payload) => cb(payload)),
 });
 
+/* dm */
+/*
+  These are the important bits that let ingest.js push user info and
+  the DM window subscribe to it. This is what fixes the “User null/unknown not found”
+  symptom when WHOIS/user snapshots arrive.
+*/
 contextBridge.exposeInMainWorld('dm', {
-  open: (sessionId, peer, bootLine) => ipcRenderer.invoke('dm:open', { sessionId, peer, bootLine }),
-  onInit: (cb) => {
-    const fn = (_e, payload) => { try { cb(payload); } catch {} };
-    ipcRenderer.on('dm:init', fn);
-    return () => ipcRenderer.off('dm:init', fn);
-    },
-  onLine: (cb) => {
-    const fn = (_e, payload) => { try { cb(payload); } catch {} };
-    ipcRenderer.on('dm:line', fn);
-    return () => ipcRenderer.off('dm:line', fn);
-  }
+  // Ask main to open (or focus) a DM window; main should respond with 'dm:init'
+  open: (sessionId, peer, bootLine) =>
+    safeInvoke('dm:open', { sessionId, peer, bootLine }),
+
+  // DM window init payload from main
+  onInit: (cb) => safeOn('dm:init', (payload) => cb(payload)),
+
+  // New DM line routed from main (ingest → main → dm window)
+  onLine: (cb) => safeOn('dm:line', (payload) => cb(payload)),
+
+  // Renderer → main: push a fresh/updated user object for the DM window
+  pushUser: (sessionId, user) =>
+    safeSend('dm:push-user', { sessionId, user }),
+
+  // DM window subscribes to user updates (WHOIS, account, away, etc.)
+  onUser: (cb) => safeOn('dm:user', (payload) => cb(payload)),
+
+  // DM window can request user info on first paint / when peer becomes known
+  requestUser: (sessionId, nick) =>
+    safeSend('dm:request-user', { sessionId, nick }),
 });

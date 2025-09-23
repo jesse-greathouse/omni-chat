@@ -18,7 +18,7 @@
       #wrap {
         height:100%;
         display:grid;
-        grid-template-rows: 1fr var(--footer-h);
+        grid-template-rows: auto 1fr var(--footer-h);
         border:1px solid var(--border);
         background:var(--panel);
       }
@@ -41,18 +41,48 @@
         border-top:1px solid var(--border);
         background:var(--panel);
       }
-    .send-btn{padding:8px 12px;border:1px solid var(--border);background:#141b2b;color:var(--fg);border-radius:6px;cursor:pointer;}
-      .msg-input{
-      width:100%;
-      padding:8px 10px;
-      border:1px solid var(--border);
-      background:#0e1320; color:var(--fg);
-      border-radius:6px; outline:none;
-    }
+      #profile {
+        display:grid;
+        grid-template-columns: repeat(4, minmax(0,1fr));
+        gap:8px 10px;
+        padding:10px 12px;
+        border-bottom:1px solid var(--border);
+        background:#12182a;
+      }
+      #profile .kv {
+        display:grid;
+        grid-template-rows:auto auto;
+        gap:2px;
+        padding:8px;
+        border:1px solid var(--border);
+        border-radius:8px;
+        min-height:54px;
+        background:#0f1424;
+      }
+      #profile .kv .k { font-size:11px; color:var(--muted); }
+      #profile .kv .v { font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+      #profile.disabled {
+        opacity:.55;
+        filter: grayscale(30%);
+      }
+      #profile .empty {
+        grid-column: 1 / -1;
+        padding:8px 0 2px;
+        color:var(--muted);
+      }
+      .send-btn{padding:8px 12px;border:1px solid var(--border);background:#141b2b;color:var(--fg);border-radius:6px;cursor:pointer;}
+        .msg-input{
+        width:100%;
+        padding:8px 10px;
+        border:1px solid var(--border);
+        background:#0e1320; color:var(--fg);
+        border-radius:6px; outline:none;
+      }
   </style>
 </head>
 <body>
   <div id="wrap">
+    <div id="profile" aria-live="polite"></div>
     <div id="log"></div>
     <div id="row"><button id="send" class="send-btn">Send</button><input id="input" class="msg-input" placeholder=""/></div>
   </div>

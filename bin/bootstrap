@@ -12,7 +12,7 @@ use File::Spec;
 # --------------------------
 my $SWITCH     = $ENV{OMNI_OCAML_SWITCH} // 'omni-irc-dev';
 my $REPO_URL   = $ENV{OMNI_IRC_REPO}    // 'https://github.com/jesse-greathouse/omni-irc';
-my $REV        = $ENV{OMNI_IRC_REV}     // '0.1.13';   # locked tag
+my $REV        = $ENV{OMNI_IRC_REV}     // '0.1.14';   # locked tag
 my $OCAML_HINT = $ENV{OMNI_OCAML_HINT}  // '5.3.0';    # preferred OCaml version
 
 $ENV{OPAMYES}  = '1';

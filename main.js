@@ -13,6 +13,7 @@ import { spawn, execFile, spawnSync } from 'node:child_process';
 ============================================================================= */
 const sessions = new Map();
 const dmWindows = new Map();
+const userCache = new Map();
 let mainWin = null;
 let installerWin = null;
 let tray = null;
@@ -128,7 +129,18 @@ function createDMWindow(sessionId, peer, bootLine ) {
   w.webContents.on('did-finish-load', () => {
     try {
       w.setTitle(String(peer));
-      w.webContents.send('dm:init', { sessionId, peer, bootLines: bootBuffer });
+      // Send init (unblocks dm.js -> sets state.sessionId and peer)
+      w.webContents.send('dm:init', {
+        sessionId,
+        peer,
+        bootLines: bootBuffer
+      });
+
+      // If we already know WHOIS/user info for this peer, deliver it now
+      const cached = userCache.get(dmKey(sessionId, peer));
+      if (cached) {
+        w.webContents.send('dm:user', { sessionId, user: cached });
+      }
     } catch {}
   });
   dmWindows.set(key, w);
@@ -678,6 +690,34 @@ function setupIPC() {
   ipcMain.handle('dm:open', async (_e, { sessionId, peer, bootLine }) => {
     createDMWindow(sessionId, peer, bootLine);
     return true;
+  });
+
+  ipcMain.on('dm:push-user', (_e, { sessionId, user }) => {
+    if (!user) return;
+    const nick =
+      user.nick || user.nickname || user.name || user.user || user.username;
+    if (!nick) return;
+
+    // cache latest user for quick replies
+    userCache.set(dmKey(sessionId, nick), { ...user });
+
+    // deliver to any DM window whose peer matches this nick (case-insensitive) in this session
+    for (const [key, win] of dmWindows.entries()) {
+      if (!win || win.isDestroyed()) continue;
+      const [sess, peerLower] = key.split(':');
+      if (sess === String(sessionId) && peerLower === String(nick).toLowerCase()) {
+        try { win.webContents.send('dm:user', { sessionId, user }); } catch {}
+      }
+    }
+  });
+
+  ipcMain.on('dm:request-user', (evt, { sessionId, nick }) => {
+    if (!nick) return;
+    const cached = userCache.get(dmKey(sessionId, nick));
+    if (cached) {
+      // reply only to the requesting DM window
+      try { evt.sender.send('dm:user', { sessionId, user: cached }); } catch {}
+    }
   });
 }
 

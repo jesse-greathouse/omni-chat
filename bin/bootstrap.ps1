@@ -1,7 +1,7 @@
 param(
   [string]$Switch     = "omni-irc-dev",
   [string]$Repo       = "https://github.com/jesse-greathouse/omni-irc",
-  [string]$Rev        = "0.1.13", # locked tag
+  [string]$Rev        = "0.1.14", # locked tag
   [string]$OcamlHint  = "5.3.0",  # preferred OCaml if available
   [ValidateSet("auto","mingw","msvc")]
   [string]$Toolchain  = "mingw"   # default to mingw on Windows; override if you must
