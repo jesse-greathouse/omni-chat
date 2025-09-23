@@ -2,6 +2,7 @@ import { createNetworkView } from '../ui/NetworkView.js';
 import { ChannelPane } from '../ui/ChannelPane.js';
 import { ConsolePane } from '../ui/ConsolePane.js';
 import { ChannelListPane } from '../ui/ChannelListPane.js';
+import { PrivmsgPane } from '../ui/PrivmsgPane.js';
 
 export const uiRefs = {
   statusEl: null,
@@ -63,7 +64,8 @@ export function ensureNetwork(opts, sessionId, mountEl) {
     channels: new Map(),
     activeChan: null,
     console: null,
-    // per-network state
+    dmWindows: new Map(),   // nick -> { pane: PrivmsgPane }
+    selfNick: null,         // learned from CLIENT {type:"client_user"}
     chanMap: new Map(),        // "#chan" -> { topic, users:Set }
     userMap: new Map(),        // nick -> info
     chanListTable: new Map(),  // name -> { users:number, topic:string }
@@ -74,6 +76,22 @@ export function ensureNetwork(opts, sessionId, mountEl) {
   ensureChannelList(net);
   activateNetwork(id);
   return net;
+}
+
+export function ensureDMWindow(net, peerNick) {
+  const key = String(peerNick);
+  if (net.dmWindows.has(key)) return net.dmWindows.get(key);
+  const pane = new PrivmsgPane(net, key, () => closeDMWindow(net, key));
+  pane.mount(net.viewEl); // float within this network view
+  const rec = { pane, peer: key };
+  net.dmWindows.set(key, rec);
+  return rec;
+}
+
+export function closeDMWindow(net, peerNick) {
+  const rec = net.dmWindows.get(peerNick);
+  if (rec) { try { rec.pane.destroy(); } catch {} }
+  net.dmWindows.delete(peerNick);
 }
 
 export function ensureChannelList(net) {

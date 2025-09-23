@@ -3,6 +3,7 @@ import {
   ensureChannel,
   appendToConsole,
   getNetworkBySessionId,
+  ensureDMWindow,
 } from '../state/store.js';
 
 export function setupIngest({ onError }) {
@@ -39,6 +40,20 @@ export function setupIngest({ onError }) {
         const chan = ensureChannel(net, target);
         chan.pane.appendLine(`${from}${kind === 'NOTICE' ? ' ▷' : ''}: ${msg}`);
         return;
+      }
+
+      // PRIVMSG/NOTICE to *us* (DM) → open/append DM window (separate BrowserWindow)
+      const dmMsg = /^:([^!]+)!([^\s]+)\s+(PRIVMSG|NOTICE)\s+([^\s#&][^\s]*)\s+:(.*)$/.exec(line);
+      if (dmMsg) {
+        const from   = dmMsg[1];
+        const kind   = dmMsg[3];
+        const target = dmMsg[4]; // should be our nick
+        const msg    = dmMsg[5];
+        if (!net.selfNick || target.localeCompare(net.selfNick, undefined, { sensitivity: 'accent' }) === 0) {
+          // pass the first line with the open request; main will queue it until the window is ready
+          window.dm.open(net.sessionId, from, { from, kind, text: msg });
+          return;
+        }
       }
 
       // everything else → this network’s console
@@ -148,7 +163,19 @@ function reconcileClientMessage(msg, net) {
       break;
     }
     case 'client_user': {
-      if (msg.user && msg.user.nick) net.userMap.set(msg.user.nick, msg.user);
+      if (msg.user && msg.user.nick) {
+        net.userMap.set(msg.user.nick, msg.user);
+        net.selfNick = msg.user.nick;
+      }
+      break;
+    }
+    case 'nick_change': {
+      const { old_nick, new_nick } = msg;
+      if (old_nick && new_nick) {
+        const u = net.userMap.get(old_nick);
+        if (u) { net.userMap.delete(old_nick); net.userMap.set(new_nick, { ...u, nick: new_nick }); }
+        if (net.selfNick && old_nick === net.selfNick) net.selfNick = new_nick;
+      }
       break;
     }
     case 'nick_change': {

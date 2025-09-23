@@ -75,6 +75,12 @@ export class ChannelPane {
       const chip = document.createElement('div');
       chip.className = 'user';
       chip.textContent = nick;
+      chip.title = `Open DM with ${nick}`;
+      chip.addEventListener('dblclick', () => {
+        const { ensureDMWindow } = require('../state/store.js'); // dynamic to avoid cycles in bundlers
+        const rec = ensureDMWindow(this.net, nick);
+        rec.pane.appendLine(`(opened DM with ${nick})`);
+      });
       this.userListEl.appendChild(chip);
     }
   }

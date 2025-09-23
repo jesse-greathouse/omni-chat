@@ -12,6 +12,7 @@ import { spawn, execFile, spawnSync } from 'node:child_process';
    Globals
 ============================================================================= */
 const sessions = new Map();
+const dmWindows = new Map();
 let mainWin = null;
 let installerWin = null;
 let tray = null;
@@ -84,6 +85,54 @@ function resolveTool(name, extraDirs = []) {
     }
   }
   return null;
+}
+
+function dmKey(sessionId, peer) {
+  return `${sessionId}:${String(peer || '').toLowerCase()}`;
+}
+
+function createDMWindow(sessionId, peer, bootLine ) {
+  const key = dmKey(sessionId, peer);
+  const existing = dmWindows.get(key);
+  if (existing && !existing.isDestroyed()) {
+    // Keep minimized / background state intact; just deliver the line.
+    if (bootLine) {
+      try {
+        existing.webContents.send('dm:line', { sessionId, peer, ...bootLine });
+        // optional nudge without raising the window:
+        // existing.flashFrame?.(true);
+      } catch {}
+    }
+    return existing;
+  } else if (existing?.isDestroyed()) {
+    dmWindows.delete(key);
+  }
+
+  const w = new BrowserWindow({
+    width: 520,
+    height: 420,
+    minWidth: 420,
+    minHeight: 320,
+    title: String(peer), // native title = peer
+    // use same preload so sessions/omni APIs exist
+    webPreferences: {
+      preload: path.join(app.getAppPath(), 'preload.cjs'),
+      contextIsolation: true,
+      nodeIntegration: false
+    }
+  });
+  w.loadFile(path.join(app.getAppPath(), 'renderer', 'dm.html'));
+  w.on('closed', () => dmWindows.delete(key));
+  const bootBuffer = [];
+  if (bootLine) bootBuffer.push({ sessionId, peer, ...bootLine });
+  w.webContents.on('did-finish-load', () => {
+    try {
+      w.setTitle(String(peer));
+      w.webContents.send('dm:init', { sessionId, peer, bootLines: bootBuffer });
+    } catch {}
+  });
+  dmWindows.set(key, w);
+  return w;
 }
 
 /* =============================================================================
@@ -599,6 +648,7 @@ function setupIPC() {
   ipcMain.handle('session:start', async (_e, id, opts) => startSession(id || genId(), opts));
   ipcMain.handle('session:stop',  async (_e, id)       => stopSession(id));
   ipcMain.handle('session:restart', async (_e, id, opts) => restartSession(id, opts));
+  
   ipcMain.on('session:send', (_e, { id, line }) => {
     const s = sessions.get(id);
     if (s && s.sock && !s.sock.destroyed) {
@@ -623,6 +673,11 @@ function setupIPC() {
     } else {
       sendToAll('bootstrap:log', 'Backend still not ready.\n');
     }
+  });
+
+  ipcMain.handle('dm:open', async (_e, { sessionId, peer, bootLine }) => {
+    createDMWindow(sessionId, peer, bootLine);
+    return true;
   });
 }
 

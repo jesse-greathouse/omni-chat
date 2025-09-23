@@ -75,3 +75,17 @@ contextBridge.exposeInMainWorld('sessions', {
     return () => ipcRenderer.off('session:error', fn);
   },
 });
+
+contextBridge.exposeInMainWorld('dm', {
+  open: (sessionId, peer, bootLine) => ipcRenderer.invoke('dm:open', { sessionId, peer, bootLine }),
+  onInit: (cb) => {
+    const fn = (_e, payload) => { try { cb(payload); } catch {} };
+    ipcRenderer.on('dm:init', fn);
+    return () => ipcRenderer.off('dm:init', fn);
+    },
+  onLine: (cb) => {
+    const fn = (_e, payload) => { try { cb(payload); } catch {} };
+    ipcRenderer.on('dm:line', fn);
+    return () => ipcRenderer.off('dm:line', fn);
+  }
+});
