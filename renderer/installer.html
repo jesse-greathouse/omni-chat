@@ -33,7 +33,7 @@
     header .status { margin-left: auto; font-weight: 600; }
     header .status.ok { color: var(--ok); }
     header .status.err { color: var(--err); }
-    main { height: calc(100% - 78px); display: grid; grid-template-rows: 1fr auto; }
+    main { height: calc(100% - 100px); display: grid; grid-template-rows: 1fr auto; }
     pre#log {
       margin: 0; padding: 14px 18px;
       overflow: auto; white-space: pre-wrap; word-break: break-word;
@@ -56,7 +56,7 @@
 <body>
   <header>
     <h1>Setting up Omni-IRC backend</h1>
-    <div class="status" id="status">running…</div>
+    <div class="status" id="status"></div>
   </header>
 
   <main>
@@ -91,7 +91,7 @@
     var offErr  = window.bootstrap.onError(function(code){ statusEl.textContent = 'error'; statusEl.classList.add('err'); appendLog('\\n[bootstrap] exited with code '+code+'\\n'); });
 
     btnRun.addEventListener('click', function () {
-      statusEl.textContent = 'running…';
+      statusEl.textContent = 'Installing…';
       statusEl.classList.remove('ok','err');
       window.bootstrap.runInTerminal();
     });

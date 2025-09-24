@@ -727,7 +727,7 @@ function setupIPC() {
 function createInstallerWindow() {
   installerWin = new BrowserWindow({
     width: 880,
-    height: 620,
+    height: 670,
     title: 'Omni Chat – First-time Setup',
     resizable: true,
     webPreferences: {
