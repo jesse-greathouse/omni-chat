@@ -232,8 +232,25 @@
         min-height: 220px;        /* has some body even on small windows */
         overflow: auto;           /* scroll only when it actually needs to */
       }
+      .form-row select {
+        width: 100%;
+        padding: 8px 10px;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        background: var(--tab-bg);
+        color: var(--fg);
+        outline: none;
+        appearance: none;
+        -webkit-appearance: none;
+        -moz-appearance: none;
+      }
+      .form-row select:focus { border-color: var(--accent-2); }
+      .form-row select option {
+        background: var(--panel);
+        color: var(--fg);
+      }
       .form-row { display: grid; grid-template-columns: 120px 1fr; gap: 8px; align-items: center; margin: 8px 0; }
-      .form-row input[type="text"], .form-row input[type="number"] {
+      .form-row input[type="text"], .form-row input[type="number"], .form-row input[type="password"] {
         width: 100%; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; background: #0e1320; color: var(--fg);
       }
       .form-row input[type="checkbox"] { transform: translateY(1px); }

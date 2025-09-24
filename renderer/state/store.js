@@ -58,6 +58,10 @@ export function ensureNetwork(opts, sessionId, mountEl) {
     host: opts?.server || 'session',
     port: opts?.ircPort ?? 0,
     tls: !!opts?.tls,
+    nick: opts?.nick || null,
+    authType: (opts?.authType || 'none').toLowerCase(),
+    authUsername: opts?.authUsername || null,
+    authPassword: opts?.authPassword || null,
     viewEl: view,
     chanListEl: chanList,
     chanHost,
@@ -69,6 +73,7 @@ export function ensureNetwork(opts, sessionId, mountEl) {
     chanMap: new Map(),        // "#chan" -> { topic, users:Set }
     userMap: new Map(),        // nick -> info
     chanListTable: new Map(),  // name -> { users:number, topic:string }
+    _nickservTried: false,     // internal guard for auto-identify
   };
   store.networks.set(id, net);
 

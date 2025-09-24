@@ -84,6 +84,15 @@ function mountProfilesPanel(layerEl) {
   layerEl.innerHTML = '';
   const panel = createProfilesPanel({
     onConnect: async (opts) => {
+      // If this form is an overlay on an *existing* connection tab, remove it
+      // right away so it can't block inputs underneath. In a brand-new tab,
+      // keep it visible until we know the connection succeeded.
+      const t0 = tabs.get(activeSessionId);
+      const hadExistingNet = !!t0?.netId;
+      if (hadExistingNet) {
+        try { panel.remove(); } catch {}
+      }
+
       // 1) create network view FIRST (prevents race)
       const t = tabs.get(activeSessionId);
       const net = ensureNetwork(opts, activeSessionId, layerEl);
@@ -95,8 +104,15 @@ function mountProfilesPanel(layerEl) {
       // 2) start this tab’s session
       try {
         await window.sessions.start(activeSessionId, opts);
+        // Success → remove the form in *all* cases so it doesn't overlay chat input.
+        try { panel.remove(); } catch {}
       } catch (e) {
         errors.append(`start[${activeSessionId}]: ${e?.message || e}`);
+        // If we hid the overlay for an existing connection, put it back so the
+        // user can retry. (In a new tab, the form was never removed.)
+        if (hadExistingNet) {
+          try { layerEl.prepend(panel); } catch {}
+        }
       }
     }
   });

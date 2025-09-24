@@ -154,9 +154,9 @@ const settings = new Store({
   name: 'omni-chat',
   defaults: {
     ui: { footerGap: 6 },
-    globals: { nick: 'guest', realname: 'Guest' },
+    globals: { nick: 'guest', realname: 'Guest', authType: 'none', authUsername: null, authPassword: null },
     servers: {
-      'irc.libera.chat': { host: 'irc.libera.chat', port: 6697, tls: true, nick: null, realname: null }
+      'irc.libera.chat': { host: 'irc.libera.chat', port: 6697, tls: true, nick: null, realname: null, authType: null, authUsername: null, authPassword: null }
     }
   }
 });
@@ -173,7 +173,13 @@ function getServers() {
 function setServers(next) { settings.set('servers', next || {}); }
 function getGlobals() {
   const g = settings.get('globals', {});
-  return { nick: (g?.nick ?? 'guest'), realname: (g?.realname ?? 'Guest') };
+  return {
+    nick: (g?.nick ?? 'guest'),
+    realname: (g?.realname ?? 'Guest'),
+    authType: (g?.authType ?? 'none'),
+    authUsername: g?.authUsername ?? null,
+    authPassword: g?.authPassword ?? null
+  };
 }
 function resolveServerProfile(host) {
   const servers = getServers();
@@ -184,7 +190,10 @@ function resolveServerProfile(host) {
     port: Number(p.port ?? 6697),
     tls:  Boolean(p.tls !== false),
     nick: (p.nick == null || p.nick === '') ? g.nick : p.nick,
-    realname: (p.realname == null || p.realname === '') ? g.realname : p.realname
+    realname: (p.realname == null || p.realname === '') ? g.realname : p.realname,
+    authType: (p.authType == null || p.authType === '') ? (g.authType || 'none') : p.authType,
+    authUsername: (p.authUsername == null || p.authUsername === '') ? (g.authUsername || null) : p.authUsername,
+    authPassword: (p.authPassword == null || p.authPassword === '') ? (g.authPassword || null) : p.authPassword
   };
 }
 ipcMain.handle('profiles:list', () => {
@@ -204,6 +213,9 @@ ipcMain.handle('profiles:upsert', (_e, host, profile) => {
     tls:  Boolean(profile?.tls ?? existing.tls ?? true),
     nick: (profile?.nick === undefined ? existing.nick : profile.nick ?? null),
     realname: (profile?.realname === undefined ? existing.realname : profile.realname ?? null),
+    authType: (profile?.authType === undefined ? existing.authType : (profile.authType ?? null)),
+    authUsername: (profile?.authUsername === undefined ? existing.authUsername : (profile.authUsername ?? null)),
+    authPassword: (profile?.authPassword === undefined ? existing.authPassword : (profile.authPassword ?? null)),
   };
   setServers(servers);
   return true;
@@ -258,24 +270,6 @@ async function getFreePort() {
   });
 }
 
-async function resolveOpamEnv(switchName = 'omni-irc-dev') {
-  const base = { ...process.env };
-  const shellArg = isWin ? 'cmd' : 'sh';
-  const { stdout } = await execFileP('opam', ['env', `--switch=${switchName}`, '--set-switch', `--shell=${shellArg}`], { windowsHide: true });
-  const envFromOpam = { ...base };
-  if (isWin) {
-    stdout.split(/\r?\n/).forEach((line) => {
-      const m = /^set\s+([^=]+)=(.*)$/i.exec(line);
-      if (m) envFromOpam[m[1]] = m[2];
-    });
-  } else {
-    stdout.split(/\r?\n/).forEach((line) => {
-      const m = /^\s*export\s+([^=]+)=(["']?)(.*)\2\s*;?\s*$/.exec(line);
-      if (m) envFromOpam[m[1]] = m[3];
-    });
-  }
-  return envFromOpam;
-}
 async function resolveOmniIrcClientPath(env) {
   const exeName = isWin ? 'omni-irc-client.exe' : 'omni-irc-client';
   if (process.env.OMNI_IRC_CLIENT) return process.env.OMNI_IRC_CLIENT;

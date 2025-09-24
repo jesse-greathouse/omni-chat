@@ -8,7 +8,21 @@ export function createProfilesPanel({ onConnect }) {
       <div class="conn-grid">
         <section style="border:1px solid var(--border);border-radius:8px;padding:12px;">
           <h4 style="margin:0 0 8px 0;">Global Defaults</h4>
+          <div class="form-row">
+            <label>Authentication</label>
+            <select id="gAuth">
+              <option value="none">No authentication</option>
+              <option value="nickserv">NickServ</option>
+              <option value="sasl">SASL</option>
+            </select>
+          </div>
           <div class="form-row"><label>Nick</label><input id="gNick" type="text"/></div>
+          <div class="form-row auth-extra" id="gAuthUserRow" style="display:none;">
+            <label>Username</label><input id="gAuthUser" type="text" />
+          </div>
+          <div class="form-row auth-extra" id="gAuthPassRow" style="display:none;">
+            <label>Password</label><input id="gAuthPass" type="password" />
+          </div>
           <div class="form-row"><label>Realname</label><input id="gReal" type="text"/></div>
           <div class="row-actions">
             <button class="btn" id="saveGlobals">Save Defaults</button>
@@ -29,7 +43,12 @@ export function createProfilesPanel({ onConnect }) {
     </div>
   `;
 
+  const gAuth = wrap.querySelector('#gAuth');
   const gNick = wrap.querySelector('#gNick');
+  const gAuthUserRow = wrap.querySelector('#gAuthUserRow');
+  const gAuthPassRow = wrap.querySelector('#gAuthPassRow');
+  const gAuthUser = wrap.querySelector('#gAuthUser');
+  const gAuthPass = wrap.querySelector('#gAuthPass');
   const gReal = wrap.querySelector('#gReal');
   const saveGlobalsBtn = wrap.querySelector('#saveGlobals');
   const addServerBtn = wrap.querySelector('#addServer');
@@ -42,12 +61,22 @@ export function createProfilesPanel({ onConnect }) {
     const right = document.createElement('div');
     right.style.display = 'flex'; right.style.gap = '8px';
 
+    const authLabel = (() => {
+      const t = (p.authType || '').toLowerCase();
+      if (!t) return 'auth=inherit';
+      if (t === 'none') return 'auth=None';
+      if (t === 'nickserv') return 'auth=NickServ';
+      if (t === 'sasl') return 'auth=SASL';
+      return `auth=${t}`;
+    })();
+
     left.innerHTML = `
       <div style="font-weight:600;">${host}</div>
       <div style="color:var(--muted);font-size:12px;">
         ${p.tls !== false ? 'TLS' : 'TCP'} • ${p.port ?? 6697}
         ${p.nick ? ` • nick=${escapeHtml(p.nick)}` : ''}
         ${p.realname ? ` • realname=${escapeHtml(p.realname)}` : ''}
+        · ${authLabel}
       </div>
     `;
     const connectBtn = button('Connect', () => doConnect(host));
@@ -76,8 +105,21 @@ export function createProfilesPanel({ onConnect }) {
   async function hydrate() {
     const all = await window.omni.getAllSettings();
     const globals = all.globals || { nick: 'guest', realname: 'Guest' };
+    gAuth.value = (globals.authType || 'none').toLowerCase();
     gNick.value = globals.nick || '';
+    gAuthUser.value = globals.authUsername || '';
+    gAuthPass.value = globals.authPassword || '';
+    const showUser = gAuth.value === 'sasl';
+    const showPass = gAuth.value === 'sasl' || gAuth.value === 'nickserv';
+    gAuthUserRow.style.display = showUser ? '' : 'none';
+    gAuthPassRow.style.display = showPass ? '' : 'none';
     gReal.value = globals.realname || '';
+
+    // Show Username only for SASL; show Password for SASL or NickServ
+    const isSasl = gAuth.value === 'sasl';
+    const isNickServ = gAuth.value === 'nickserv';
+    gAuthUserRow.style.display = isSasl ? '' : 'none';
+    gAuthPassRow.style.display = (isSasl || isNickServ) ? '' : 'none';
 
     listEl.innerHTML = '';
     const profs = await window.omni.profilesList();
@@ -92,10 +134,20 @@ export function createProfilesPanel({ onConnect }) {
     }
   }
 
+  gAuth.addEventListener('change', () => {
+    const isSasl = gAuth.value === 'sasl';
+    const isNickServ = gAuth.value === 'nickserv';
+    gAuthUserRow.style.display = isSasl ? '' : 'none';
+    gAuthPassRow.style.display = (isSasl || isNickServ) ? '' : 'none';
+  });
+
   saveGlobalsBtn.addEventListener('click', async () => {
     const nick = gNick.value.trim() || 'guest';
     const realname = gReal.value.trim() || 'Guest';
-    await window.omni.setSetting('globals', { nick, realname });
+    const authType = (gAuth.value || 'none').toLowerCase();
+    const authUsername = authType === 'sasl' ? (gAuthUser.value.trim() || null) : null;
+    const authPassword = gAuthPass.value || null;
+    await window.omni.setSetting('globals', { nick, realname, authType, authUsername, authPassword });
     alert('Saved global defaults.');
   });
   addServerBtn.addEventListener('click', () => openEditor(null)); // new
@@ -108,7 +160,13 @@ export function createProfilesPanel({ onConnect }) {
       ircPort: Number(resolved.port || 6697),
       tls: !!resolved.tls,
       nick: resolved.nick,
-      realname: resolved.realname
+      realname: resolved.realname,
+      authType: (resolved.authType || 'none').toLowerCase(),
+      // Username only matters for SASL; keep NickServ simpler
+      authUsername: ((resolved.authType || 'none').toLowerCase() === 'sasl'
+        ? (resolved.authUsername || null)
+        : null),
+      authPassword: resolved.authPassword || null
     };
     // session start is handled by caller (renderer/main.js) so we just pass back
     onConnect?.(opts, host);
@@ -127,6 +185,21 @@ export function createProfilesPanel({ onConnect }) {
         <div class="form-row"><label>TLS</label><input id="eTLS" type="checkbox" checked/></div>
         <div class="form-row"><label>Nick (override)</label><input id="eNick" type="text" placeholder="leave empty to inherit"/></div>
         <div class="form-row"><label>Realname (override)</label><input id="eReal" type="text" placeholder="leave empty to inherit"/></div>
+        <div class="form-row">
+          <label>Authentication</label>
+          <select id="eAuth">
+            <option value="">Inherit (use Global)</option>
+            <option value="none">No authentication</option>
+            <option value="nickserv">NickServ</option>
+            <option value="sasl">SASL</option>
+          </select>
+        </div>
+        <div class="form-row" id="eAuthUserRow" style="display:none;">
+          <label>Username</label><input id="eAuthUser" type="text" placeholder="SASL only · leave empty to inherit"/>
+        </div>
+        <div class="form-row" id="eAuthPassRow" style="display:none;">
+          <label>Password</label><input id="eAuthPass" type="password" placeholder="leave empty to inherit"/>
+        </div>
         <div class="row-actions">
           <button class="btn" id="eSave">Save</button>
           <button class="btn" id="eCancel">Cancel</button>
@@ -139,7 +212,20 @@ export function createProfilesPanel({ onConnect }) {
     const eNick = dialog.querySelector('#eNick');
     const eReal = dialog.querySelector('#eReal');
     const eSave = dialog.querySelector('#eSave');
+    const eAuth = dialog.querySelector('#eAuth');
+    const eAuthUserRow = dialog.querySelector('#eAuthUserRow');
+    const eAuthPassRow = dialog.querySelector('#eAuthPassRow');
+    const eAuthUser = dialog.querySelector('#eAuthUser');
+    const eAuthPass = dialog.querySelector('#eAuthPass');
     const eCancel = dialog.querySelector('#eCancel');
+
+    const updateAuthVisibility = () => {
+      const t = (eAuth.value || '').toLowerCase();
+      const isSasl = t === 'sasl';
+      const isNickServ = t === 'nickserv';
+      eAuthUserRow.style.display = isSasl ? '' : 'none';
+      eAuthPassRow.style.display = (isSasl || isNickServ) ? '' : 'none';
+    };
 
     (async () => {
       if (host) {
@@ -150,14 +236,24 @@ export function createProfilesPanel({ onConnect }) {
         eTLS.checked = p.tls !== false;
         eNick.value = p.nick ?? '';
         eReal.value = p.realname ?? '';
+        eAuth.value = (p.authType || '').toLowerCase();
+        eAuthUser.value = p.authUsername ?? '';
+        eAuthPass.value = p.authPassword ?? '';
+        updateAuthVisibility();
       } else {
         eHost.value = '';
         ePort.value = 6697;
         eTLS.checked = true;
         eNick.value = '';
         eReal.value = '';
+        eAuth.value = '';
+        eAuthUser.value = '';
+        eAuthPass.value = '';
+        updateAuthVisibility();
       }
     })();
+
+    eAuth.addEventListener('change', updateAuthVisibility);
 
     eSave.addEventListener('click', async () => {
       const hostVal = (eHost.value || '').trim();
@@ -166,7 +262,17 @@ export function createProfilesPanel({ onConnect }) {
         port: Number(ePort.value || 6697),
         tls: !!eTLS.checked,
         nick: eNick.value.trim() === '' ? null : eNick.value.trim(),
-        realname: eReal.value.trim() === '' ? null : eReal.value.trim()
+        realname: eReal.value.trim() === '' ? null : eReal.value.trim(),
+        // auth: null/'' => inherit global
+        authType: (eAuth.value || '') === '' ? null : (eAuth.value || '').toLowerCase(),
+        // Username only meaningful for SASL; null in other modes or when left empty
+        authUsername: ((eAuth.value || '').toLowerCase() === 'sasl')
+          ? (eAuthUser.value.trim() || null)
+          : null,
+        // Password applies to SASL and NickServ; empty => inherit (null)
+        authPassword: ((eAuth.value || '').toLowerCase() === 'sasl' || (eAuth.value || '').toLowerCase() === 'nickserv')
+          ? (eAuthPass.value || null)
+          : null
       };
       await window.omni.profilesUpsert(hostVal, payload);
       dialog.remove();

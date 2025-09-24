@@ -2,9 +2,15 @@ import {
   store,
   ensureChannel,
   appendToConsole,
-  getNetworkBySessionId,
-  ensureDMWindow,
+  getNetworkBySessionId
 } from '../state/store.js';
+
+function stripIrcCodes(s) {
+  // mIRC color \x03([0-9]{1,2})(,[0-9]{1,2})?
+  return String(s)
+    .replace(/\x03(\d{1,2})(,\d{1,2})?/g, '')
+    .replace(/[\x00-\x1F\x7F]/g, ''); // bold(\x02), italic(\x1D), underline(\x1F), reset(\x0F), etc.
+}
 
 export function setupIngest({ onError }) {
   // IMPORTANT: now ingests **per session**
@@ -43,15 +49,50 @@ export function setupIngest({ onError }) {
       }
 
       // PRIVMSG/NOTICE to *us* (DM) → open/append DM window (separate BrowserWindow)
-      const dmMsg = /^:([^!]+)!([^\s]+)\s+(PRIVMSG|NOTICE)\s+([^\s#&][^\s]*)\s+:(.*)$/.exec(line);
+      // Be permissive: prefix may or may not include !ident@host.
+      //   :NickServ NOTICE you :text
+      //   :NickServ!NickServ@services PRIVMSG you :text
+      const cleaned = stripIrcCodes(line)
+      const dmMsg =
+        /^:([^ ]+)\s+(PRIVMSG|NOTICE)\s+([^\s#&][^\s]*)\s+:(.*)$/.exec(cleaned);
       if (dmMsg) {
-        const from   = dmMsg[1];
-        const kind   = dmMsg[3];
-        const target = dmMsg[4]; // should be our nick
-        const msg    = dmMsg[5];
-        if (!net.selfNick || target.localeCompare(net.selfNick, undefined, { sensitivity: 'accent' }) === 0) {
-          // pass the first line with the open request; main will queue it until the window is ready
-          window.dm.open(net.sessionId, from, { from, kind, text: msg });
+        const fromFull = dmMsg[1];                 // may be "nick" or "nick!ident@host"
+        const kind     = dmMsg[2];
+        const target   = dmMsg[3];                 // intended to be our nick
+        const msg      = dmMsg[4];
+
+        // Normalize sender nick from prefix
+        const fromNick = String(fromFull.split('!')[0] || '').replace(/^[~&@%+]/, '');
+        const isTargetUs = !net.selfNick
+          ? true
+          : String(target).localeCompare(net.selfNick, undefined, { sensitivity: 'accent' }) === 0;
+
+        if (isTargetUs) {
+          // NickServ: never open a DM window, regardless of message content.
+          const isNickServ = fromNick.localeCompare('NickServ', undefined, { sensitivity: 'accent' }) === 0;
+          if (isNickServ) {
+            const hasPass = !!net.authPassword;
+            const wantsNickServ = (net.authType === 'nickserv');
+            const nickForIdentify =
+              (net.nick && String(net.nick)) ||
+              (net.selfNick && String(net.selfNick)) ||
+              '';
+            // For NickServ we use NICK + PASSWORD (username is ignored)
+            if (wantsNickServ && hasPass && !net._nickservTried) {
+              net._nickservTried = true;
+              try {
+                const acct = (net.authUsername && String(net.authUsername).trim()) || null;
+                const cmd = acct
+                  ? `/msg NickServ IDENTIFY ${acct} ${net.authPassword}`
+                  : `/msg NickServ IDENTIFY ${net.authPassword}`;
+                window.sessions.send(net.sessionId, cmd);
+              } catch {}
+            }
+            // Swallow *all* NickServ DMs/NOTICES (no DM window).
+            return;
+          }
+          // Otherwise, open DM window as usual
+          window.dm.open(net.sessionId, fromNick, { from: fromNick, kind, text: msg });
           return;
         }
       }
@@ -193,6 +234,16 @@ function reconcileClientMessage(msg, net) {
         net.userMap.set(msg.user.nick, msg.user);
         net.selfNick = msg.user.nick;
         try { window.dm.pushUser?.(net.sessionId, msg.user); } catch {}
+
+        // opportunistic auto-identify on connect
+        if (net.authType === 'nickserv' && net.authPassword && !net._nickservTried) {
+          net._nickservTried = true;
+          const acct = (net.authUsername && String(net.authUsername).trim()) || null;
+          const cmd = acct
+            ? `/msg NickServ IDENTIFY ${acct} ${net.authPassword}`
+            : `/msg NickServ IDENTIFY ${net.authPassword}`;
+          try { window.sessions.send(net.sessionId, cmd); } catch {}
+        }
       }
       break;
     }
@@ -210,16 +261,8 @@ function reconcileClientMessage(msg, net) {
       }
       break;
     }
-    case 'nick_change': {
-      const { old_nick, new_nick } = msg;
-      if (old_nick && new_nick) {
-        const u = net.userMap.get(old_nick);
-        if (u) { net.userMap.delete(old_nick); net.userMap.set(new_nick, { ...u, nick: new_nick }); }
-      }
-      break;
-    }
     default: {
-      appendToConsole(net, `CLIENT ${JSON.stringify(msg).slice(0, 400)}…`);
+      if (msg?.type) appendToConsole(net, `CLIENT(${msg.type}) ${JSON.stringify(msg).slice(0, 400)}…`);
     }
   }
 }

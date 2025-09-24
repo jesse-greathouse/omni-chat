@@ -110,7 +110,7 @@ export class ChannelPane {
     const t = setTimeout(() => {
       this._whoisHoverTimers.delete(nick);
       if (this.net?.sessionId) {
-        window.sessions.send(this.net.sessionId, `/whois ${nick}`);
+        window.sessions.send(this.net.sessionId, `/whois ${nick} ${nick}`);
       }
     }, 220); // small debounce so casual passes don’t fire
     this._whoisHoverTimers.set(nick, t);
