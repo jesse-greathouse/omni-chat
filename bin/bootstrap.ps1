@@ -180,8 +180,29 @@ $opamFiles = Get-ChildItem -LiteralPath $SrcDir -Filter '*.opam' -File -ErrorAct
 if (-not $opamFiles) {
   Write-Warning "No .opam files found in $SrcDir. Ensure they are present (or generated)."
 } else {
-  # Order is irrelevant when using --no-action
-  $pkgNames = $opamFiles | ForEach-Object { $_.BaseName } | Sort-Object -Unique
+  # skip Windows-unavailable packages
+  $allNames   = $opamFiles | ForEach-Object { $_.BaseName } | Sort-Object -Unique
+  $skipByName = @('omni-irc-ui-notty','omni-irc-io-unixsock')  # explicitly not for Win32
+
+  if ($IsWindows) {
+    $pkgNames =
+      $opamFiles | Where-Object {
+        $name = $_.BaseName
+        $body = Get-Content -LiteralPath $_.FullName -Raw
+        -not (
+          $skipByName -contains $name -or
+          $body -match 'available:\s*\[\s*os\s*!=\s*"win32"\s*\]'
+        )
+      } | ForEach-Object { $_.BaseName } | Sort-Object -Unique
+
+    $skipped = $allNames | Where-Object { $pkgNames -notcontains $_ }
+    if ($skipped) {
+      Write-Host ("Skipping (Windows): {0}" -f ($skipped -join ', '))
+    }
+  } else {
+    $pkgNames = $allNames
+  }
+
   Write-Host "Pinning packages (register only; no build yet) from: $SrcDir"
   foreach ($pkg in $pkgNames) {
     Write-Host (" → pinning {0}" -f $pkg)
@@ -191,6 +212,7 @@ if (-not $opamFiles) {
   # show what’s pinned
   Invoke-Opam pin list --root "$Root" --switch $Switch
 }
+
 
 # WORKAROUND: omni-irc-ui.loopback needs yojson but the opam for omni-irc-ui may not declare it.
 # Install yojson up-front so the build doesn't fail on missing library.
