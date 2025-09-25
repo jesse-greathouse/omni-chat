@@ -19,6 +19,7 @@ let installerWin = null;
 let tray = null;
 let bootstrapChild = null;
 let bootstrapLogPath = null;
+let _cachedOverlayPng = null
 
 /* =============================================================================
    Paths & Small Utilities
@@ -87,7 +88,17 @@ function resolveTool(name, extraDirs = []) {
   }
   return null;
 }
-
+function notificationBallPng() {
+  if (null !== _cachedOverlayPng) return _cachedOverlayPng;
+  _cachedOverlayPng = nativeImage.createFromPath(assetPath('build', 'icons', 'png', 'notification_ball_16.png'));
+  return _cachedOverlayPng;
+}
+function dmAppId(sessionId, username) {
+  const cleanUser = String(username).toLowerCase().replace(/[^a-z0-9]+/g, '.').replace(/^\.+|\.+$/g, '');
+  const cleanSess = String(sessionId).toLowerCase().replace(/[^a-z0-9]+/g, '.');
+  const id = `com.omnichat.app.dm.${cleanUser}.${cleanSess}`;
+  return id.slice(0, 120); // headroom under 128
+}
 function dmKey(sessionId, peer) {
   return `${sessionId}:${String(peer || '').toLowerCase()}`;
 }
@@ -100,8 +111,6 @@ function createDMWindow(sessionId, peer, bootLine ) {
     if (bootLine) {
       try {
         existing.webContents.send('dm:line', { sessionId, peer, ...bootLine });
-        // optional nudge without raising the window:
-        // existing.flashFrame?.(true);
       } catch {}
     }
     return existing;
@@ -110,11 +119,14 @@ function createDMWindow(sessionId, peer, bootLine ) {
   }
 
   const w = new BrowserWindow({
-    width: 520,
-    height: 420,
+    width: 640,
+    height: 480,
     minWidth: 420,
     minHeight: 320,
     title: String(peer), // native title = peer
+    icon: isWin
+      ? assetPath('build', 'icons', 'icon.ico')
+      : assetPath('build', 'icons', 'png', 'omnichat_16.png'),
     // use same preload so sessions/omni APIs exist
     webPreferences: {
       preload: path.join(app.getAppPath(), 'preload.cjs'),
@@ -122,6 +134,11 @@ function createDMWindow(sessionId, peer, bootLine ) {
       nodeIntegration: false
     }
   });
+  
+  if (process.platform === 'win32') {
+    try { w.setAppDetails({ appId: dmAppId(sessionId, peer) }); } catch {}
+  }
+
   w.loadFile(path.join(app.getAppPath(), 'renderer', 'dm.html'));
   w.on('closed', () => dmWindows.delete(key));
   const bootBuffer = [];
@@ -623,10 +640,44 @@ function createWindow() {
 }
 
 function buildMenu() {
+  const isMac = process.platform === 'darwin';
+
   const tpl = [
+    ...(isMac ? [{
+      label: app.name,
+      submenu: [{ role: 'about' }, { type: 'separator' }, { role: 'hide' }, { role: 'hideOthers' }, { role: 'unhide' }, { type: 'separator' }, { role: 'quit' }]
+    }] : []),
+
+    {
+      label: 'View',
+      submenu: [
+        { role: 'reload' },
+        { role: 'forceReload' },
+        { type: 'separator' },
+        {
+          label: 'Developer Tools',
+          accelerator: isMac ? 'Alt+Command+I' : 'Ctrl+Shift+I',
+          click: () => {
+            const win = BrowserWindow.getFocusedWindow();
+            if (!win) return;
+            if (win.webContents.isDevToolsOpened()) {
+              win.webContents.closeDevTools();
+            } else {
+              win.webContents.openDevTools({ mode: 'detach' }); // or omit option to dock
+            }
+          }
+        },
+        { role: 'toggleDevTools', accelerator: isMac ? 'Alt+Command+I' : 'Ctrl+Shift+I' },
+        { role: 'toggleDevTools', accelerator: isMac ? 'Alt+Command+I' : 'F12' },
+        { type: 'separator' },
+        { role: 'togglefullscreen' }
+      ]
+    },
+
     { label: 'Window', submenu: [{ role: 'minimize' }, { role: 'close' }]},
     { role: 'help', submenu: [] }
   ];
+
   Menu.setApplicationMenu(Menu.buildFromTemplate(tpl));
 }
 
@@ -681,9 +732,54 @@ function setupIPC() {
     }
   });
 
+  // DMs
   ipcMain.handle('dm:open', async (_e, { sessionId, peer, bootLine }) => {
     createDMWindow(sessionId, peer, bootLine);
     return true;
+  });
+
+  ipcMain.on('dm:notify', (_e, { sessionId, peer }) => {
+    const w = dmWindows.get(dmKey(sessionId, peer));
+    if (!w || w.isDestroyed()) return;
+
+    // play the notification sound
+    const cueSound = () => {
+      try { w.webContents.send('dm:play-sound'); } catch {}
+    };
+
+    if (w.webContents.isLoading()) {
+      w.webContents.once('did-finish-load', cueSound);
+    } else {
+      cueSound();
+    }
+
+    if (process.platform === 'win32') {
+      const setOverlay = () => {
+        const img = notificationBallPng();
+        if (img) {
+          try { w.setOverlayIcon(img, ''); } catch {}
+        }
+      };
+
+      // Works for both visible and minimized windows; only wait if it truly
+      // hasn’t been shown yet (no taskbar button yet).
+      if (w.isMinimized() || w.isVisible()) {
+        setOverlay();
+      } else {
+        w.once('ready-to-show', setOverlay);
+      }
+
+      const clear = () => { try { w.setOverlayIcon(null, ''); } catch {} };
+      w.once('focus',  clear);
+      w.once('closed', clear);
+    } else if (process.platform === 'darwin') {
+      try { app.dock?.setBadge?.('•'); } catch {}
+      const clear = () => { try { app.dock?.setBadge?.(''); } catch {} };
+      w.once('focus', clear);
+      w.once('closed', clear);
+    } else {
+      // Linux: no taskbar overlay support
+    }
   });
 
   ipcMain.on('dm:push-user', (_e, { sessionId, user }) => {
@@ -745,6 +841,7 @@ async function ensureBackendReadyAtStartup() {
 }
 
 app.whenReady().then(async () => {
+  if (isWin) { try { app.setAppUserModelId('com.omnichat.app'); } catch {} }
   // Make brew/macports visible when launched from Finder
   seedUnixPath(process.env);
   setupIPC();

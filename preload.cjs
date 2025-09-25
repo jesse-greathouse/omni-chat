@@ -75,9 +75,18 @@ contextBridge.exposeInMainWorld('sessions', {
   symptom when WHOIS/user snapshots arrive.
 */
 contextBridge.exposeInMainWorld('dm', {
+  onPlaySound: (cb) => safeOn('dm:play-sound', () => cb?.()),
+
   // Ask main to open (or focus) a DM window; main should respond with 'dm:init'
   open: (sessionId, peer, bootLine) =>
     safeInvoke('dm:open', { sessionId, peer, bootLine }),
+
+  // Ask main to gently notify the specific DM window:
+  //  - if minimized  → attention()
+  //  - else if not focused → nudge()
+  //  - else do nothing
+  notify: (sessionId, peer) =>
+    safeSend('dm:notify', { sessionId, peer }),
 
   // DM window init payload from main
   onInit: (cb) => safeOn('dm:init', (payload) => cb(payload)),

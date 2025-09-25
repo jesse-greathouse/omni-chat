@@ -44,7 +44,8 @@ export function setupIngest({ onError }) {
         const target = chMsg[4];
         const msg    = chMsg[5];
         const chan = ensureChannel(net, target);
-        chan.pane.appendLine(`${from}${kind === 'NOTICE' ? ' ▷' : ''}: ${msg}`);
+        const marker = ' • '; // or ' (NOTICE) '
+        chan.pane.appendLine(`${from}${kind === 'NOTICE' ? marker : ''}: ${msg}`);
         return;
       }
 
@@ -73,10 +74,6 @@ export function setupIngest({ onError }) {
           if (isNickServ) {
             const hasPass = !!net.authPassword;
             const wantsNickServ = (net.authType === 'nickserv');
-            const nickForIdentify =
-              (net.nick && String(net.nick)) ||
-              (net.selfNick && String(net.selfNick)) ||
-              '';
             // For NickServ we use NICK + PASSWORD (username is ignored)
             if (wantsNickServ && hasPass && !net._nickservTried) {
               net._nickservTried = true;
@@ -91,8 +88,10 @@ export function setupIngest({ onError }) {
             // Swallow *all* NickServ DMs/NOTICES (no DM window).
             return;
           }
-          // Otherwise, open DM window as usual
-          window.dm.open(net.sessionId, fromNick, { from: fromNick, kind, text: msg });
+          // Otherwise, open DM window as usual, then notify it (attention/nudge)
+          window.dm
+            .open(net.sessionId, fromNick, { from: fromNick, kind, text: msg })
+            .then(() => { try { window.dm.notify(net.sessionId, fromNick); } catch {} });
           return;
         }
       }

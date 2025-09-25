@@ -8,6 +8,20 @@ const lines = [];
 const textNode = document.createTextNode('');
 logEl.appendChild(textNode);
 
+// notification sound
+let ding = null;
+try {
+  ding = new Audio('../build/wav/notification.wav');
+  ding.preload = 'auto';
+} catch {}
+
+// Play when main signals a new PM (same trigger as taskbar overlay)
+window.dm.onPlaySound?.(() => {
+  if (!ding) return;
+  try { ding.currentTime = 0; } catch {}
+  ding.play?.().catch(()=>{});
+});
+
 function requestWhois() {
   if (!state.sessionId || !state.peer) return;
   // using "<nick> <nick>" often yields richer info (account, etc.)

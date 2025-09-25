@@ -33,7 +33,7 @@ function renderTabs() {
   }
   const plus = document.createElement('button');
   plus.id = 'newTabBtn';
-  plus.textContent = '＋';
+  plus.textContent = '+';
   plus.title = 'Open new connection tab';
   plus.addEventListener('click', openNewTab);
   tabbarEl.appendChild(plus);
