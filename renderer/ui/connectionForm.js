@@ -1,3 +1,5 @@
+import { api } from '../lib/adapter.js';
+
 export function createProfilesPanel({ onConnect }) {
   const wrap = document.createElement('div');
   wrap.className = 'conn-wrap';
@@ -83,7 +85,7 @@ export function createProfilesPanel({ onConnect }) {
     const editBtn    = button('Edit',    () => openEditor(host));
     const delBtn     = button('Delete',  async () => {
       if (!confirm(`Delete server profile "${host}"?`)) return;
-      await window.omni.profilesDelete(host);
+      await api.profiles.del(host);
       await hydrate();
     });
     right.append(connectBtn, editBtn, delBtn);
@@ -103,7 +105,7 @@ export function createProfilesPanel({ onConnect }) {
   }
 
   async function hydrate() {
-    const all = await window.omni.getAllSettings();
+    const all = await api.settings.getAll();
     const globals = all.globals || { nick: 'guest', realname: 'Guest' };
     gAuth.value = (globals.authType || 'none').toLowerCase();
     gNick.value = globals.nick || '';
@@ -122,7 +124,7 @@ export function createProfilesPanel({ onConnect }) {
     gAuthPassRow.style.display = (isSasl || isNickServ) ? '' : 'none';
 
     listEl.innerHTML = '';
-    const profs = await window.omni.profilesList();
+    const profs = await api.profiles.list();
     const hosts = Object.keys(profs).sort((a,b)=>a.localeCompare(b));
     if (hosts.length === 0) {
       const empty = document.createElement('div');
@@ -147,14 +149,14 @@ export function createProfilesPanel({ onConnect }) {
     const authType = (gAuth.value || 'none').toLowerCase();
     const authUsername = authType === 'sasl' ? (gAuthUser.value.trim() || null) : null;
     const authPassword = gAuthPass.value || null;
-    await window.omni.setSetting('globals', { nick, realname, authType, authUsername, authPassword });
+    await api.settings.set('globals', { nick, realname, authType, authUsername, authPassword });
     alert('Saved global defaults.');
   });
   addServerBtn.addEventListener('click', () => openEditor(null)); // new
 
   async function doConnect(host) {
     // resolve layered profile
-    const resolved = await window.omni.profilesResolve(host);
+    const resolved = await api.profiles.resolve(host);
     const opts = {
       server: resolved.host,
       ircPort: Number(resolved.port || 6697),
@@ -229,7 +231,7 @@ export function createProfilesPanel({ onConnect }) {
 
     (async () => {
       if (host) {
-        const profs = await window.omni.profilesList();
+        const profs = await api.profiles.list();
         const p = profs[host] || {};
         eHost.value = host;
         ePort.value = Number(p.port ?? 6697);
@@ -274,7 +276,7 @@ export function createProfilesPanel({ onConnect }) {
           ? (eAuthPass.value || null)
           : null
       };
-      await window.omni.profilesUpsert(hostVal, payload);
+      await api.profiles.upsert(hostVal, payload);
       dialog.remove();
       await hydrate();
     });

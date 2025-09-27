@@ -1,3 +1,4 @@
+import { api } from '../lib/adapter.js';
 import { TranscriptBuffer } from './TranscriptBuffer.js';
 
 export class ConsolePane {
@@ -50,7 +51,7 @@ export class ConsolePane {
     const text = this.msgInput.value.trim();
     if (!text) return;
     if (this.net?.sessionId) {
-      window.sessions.send(this.net.sessionId, text);
+      api.sessions.send(this.net.sessionId, text);
       this.appendLine(`> ${text}`);
       this.msgInput.value = '';
     }

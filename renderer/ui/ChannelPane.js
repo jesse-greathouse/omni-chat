@@ -1,3 +1,4 @@
+import { api } from '../lib/adapter.js';
 import { TranscriptBuffer } from './TranscriptBuffer.js';
 
 export class ChannelPane {
@@ -78,7 +79,7 @@ export class ChannelPane {
       chip.textContent = nick;
       chip.title = `Open DM with ${nick}`;
       chip.addEventListener('click', () => {
-        window.dm.open(this.net.sessionId, nick, null);
+        api.dm.open(this.net.sessionId, nick, null);
       });
 
       chip.addEventListener('mouseenter', () => this._scheduleWhois(nick));
@@ -97,7 +98,7 @@ export class ChannelPane {
     const text = this.msgInput.value.trim();
     if (!text) return;
     if (this.net?.sessionId) {
-      window.sessions.send(this.net.sessionId, `/msg ${this.name} ${text}`);
+      api.sessions.send(this.net.sessionId, `/msg ${this.name} ${text}`);
       this.appendLine(`> ${text}`);
       this.msgInput.value = '';
     }
@@ -110,7 +111,7 @@ export class ChannelPane {
     const t = setTimeout(() => {
       this._whoisHoverTimers.delete(nick);
       if (this.net?.sessionId) {
-        window.sessions.send(this.net.sessionId, `/whois ${nick} ${nick}`);
+        api.sessions.send(this.net.sessionId, `/whois ${nick} ${nick}`);
       }
     }, 220); // small debounce so casual passes don’t fire
     this._whoisHoverTimers.set(nick, t);

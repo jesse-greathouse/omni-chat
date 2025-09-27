@@ -80,22 +80,22 @@
     var btnOpen = document.getElementById('btnOpenLogs');
     var btnGo   = document.getElementById('btnProceed');
 
-    if (!window.bootstrap) { console.error('preload missing'); return; }
+    if (!window.api || !window.api.bootstrap) { console.error('preload/api missing'); return; }
     var logEl   = document.getElementById('log');
     function appendLog(s){ if(!logEl) return; logEl.textContent += String(s); logEl.scrollTop = logEl.scrollHeight; }
 
     // subscribe to background-mode logs (mac auto-tail + background run)
-    var offLog = window.bootstrap.onLog(function(line){ appendLog(line); });
-    var offDone = window.bootstrap.onDone(function(){ statusEl.textContent = 'ok'; statusEl.classList.add('ok'); });
-    var offErr  = window.bootstrap.onError(function(code){ statusEl.textContent = 'error'; statusEl.classList.add('err'); appendLog('\\n[bootstrap] exited with code '+code+'\\n'); });
+    var offLog = window.api.bootstrap.onLog(function(line){ appendLog(line); });
+    var offDone = window.api.bootstrap.onDone(function(){ statusEl.textContent = 'ok'; statusEl.classList.add('ok'); });
+    var offErr  = window.api.bootstrap.onError(function(code){ statusEl.textContent = 'error'; statusEl.classList.add('err'); appendLog('\n[bootstrap] exited with code '+code+'\n'); });
 
     btnRun.addEventListener('click', function () {
       statusEl.textContent = 'Installing…';
       statusEl.classList.remove('ok','err');
-      window.bootstrap.runInTerminal();
+      window.api.bootstrap.runInTerminal();
     });
-    btnOpen.addEventListener('click', function () { window.bootstrap.openLogsDir(); });
-    btnGo.addEventListener('click', function () { window.bootstrap.proceedIfReady(); });
+    btnOpen.addEventListener('click', function () { window.api.bootstrap.openLogsDir(); });
+    btnGo.addEventListener('click', function () { window.api.bootstrap.proceedIfReady(); });
   })();
   </script>
 
