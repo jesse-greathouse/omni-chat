@@ -20,7 +20,7 @@ function renderTabs() {
   for (const { id, title } of tabs.values()) {
     const el = document.createElement('div');
     el.className = 'tab' + (id === activeSessionId ? ' active' : '');
-    el.innerHTML = `<span class="title">${title}</span><span class="close" title="Close">×</span>`;
+    el.innerHTML = `<span class="title">${title}</span><span class="close" title="Close">x</span>`;
     el.addEventListener('click', (ev) => {
       if (ev.target.closest('.close')) {
         closeTab(id);

@@ -3,7 +3,7 @@ export function createProfilesPanel({ onConnect }) {
   wrap.className = 'conn-wrap';
   wrap.innerHTML = `
     <div class="conn-card">
-      <h3>Omni-Chat — Connections</h3>
+      <h3>Omni-Chat - Connections</h3>
 
       <div class="conn-grid">
         <section style="border:1px solid var(--border);border-radius:8px;padding:12px;">

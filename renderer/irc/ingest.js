@@ -210,7 +210,7 @@ function reconcileClientMessage(msg, net) {
       for (const raw of list) {
         if (!raw || typeof raw !== 'object') continue;
 
-        // Some backends echo "type"/"op" at the top level — strip obvious non-user metadata
+        // Some backends echo "type"/"op" at the top level - strip obvious non-user metadata
         const { type: _t, op: _op, ...u0 } = raw;
 
         const key =

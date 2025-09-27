@@ -84,7 +84,7 @@ window.dm.onInit(({ sessionId, peer, bootLines }) => {
     requestWhois();
   }
   if (Array.isArray(bootLines)) {
-    for (const l of bootLines) append(`${l.from}${l.kind === 'NOTICE' ? ' ▖' : ''}: ${l.text}`);
+    for (const l of bootLines) append(`${l.from}${l.kind === 'NOTICE' ? ' (NOTICE)' : ''}: ${l.text}`);
   }
 });
 
@@ -161,10 +161,10 @@ window.dm.onUser?.((payload) => {
   }
 });
 
-function sendNow(){
+function sendNow() {
   const t = input.value.trim();
   if (!t || !state.sessionId || !state.peer) return;
-  window.sessions.send(state.sessionId, `/msg ${state.peer} ${t}`);
+  try { window.sessions.send(state.sessionId, `/msg ${state.peer} ${t}`); } catch {};
   append(`> ${t}`);
   input.value = '';
 }
@@ -173,7 +173,7 @@ btnSend.addEventListener('click', sendNow);
 input.addEventListener('keydown', (e)=>{ if (e.key === 'Enter') sendNow(); });
 
 // receive routed DM lines (sent directly from main)
-window.dm.onLine((p) => {
+window?.dm?.onLine?.((p) => {
   if (!p) return;
   if (p.sessionId !== state.sessionId) return;
 
@@ -198,7 +198,7 @@ window.dm.onLine((p) => {
     const want = String(state.peer).toLowerCase();
     if (got !== want) return;
   }
-  append(`${p.from}${p.kind === 'NOTICE' ? ' ▖' : ''}: ${p.text}`);
+  append(`${p.from}${p.kind === 'NOTICE' ? ' (NOTICE)' : ''}: ${p.text}`);
 });
 
 renderProfile(null);

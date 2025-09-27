@@ -16,7 +16,7 @@ The User must provide Opam (And on Windows 10 or 11: MSYS2 or Cygwin)
 
 ---
 
-## 🚀 First run (Windows / macOS / Linux — no manual `opam` commands)
+## 🚀 First run (Windows / macOS / Linux -- no manual `opam` commands)
 
 1. **Install prerequisites (once):**
 
@@ -147,7 +147,7 @@ The Electron app will auto-detect:
 
 ## 🍎🐧 macOS / Linux notes
 
-* The bundled **`bin/bootstrap`** (Perl) handles `opam` init, repo repair, switch creation, pinning, depexts, and install—same as Windows.
+* The bundled **`bin/bootstrap`** (Perl) handles `opam` init, repo repair, switch creation, pinning, depexts, and install; same as Windows.
 * When launched from Finder, macOS apps don’t inherit your shell `PATH`; Omni Chat augments `PATH` with common Homebrew/MacPorts locations so `opam`/`git` are found.
 * Unix domain sockets live under `${XDG_RUNTIME_DIR}/omni-chat` (0700) or your temp dir; the app prevents duplicate sessions and cleans up stale sockets.
 

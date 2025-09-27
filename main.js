@@ -478,7 +478,7 @@ read -r _
   try {
     fs.mkdirSync(path.dirname(bootstrapLogPath), { recursive: true });
     // Truncate + header
-    fs.writeFileSync(bootstrapLogPath, `# Omni-IRC bootstrap log — ${new Date().toISOString()}\n`);
+    fs.writeFileSync(bootstrapLogPath, `# Omni-IRC bootstrap log -- ${new Date().toISOString()}\n`);
   } catch {}
 
   if (isWin) {
