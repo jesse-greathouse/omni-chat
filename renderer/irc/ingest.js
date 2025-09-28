@@ -4,6 +4,7 @@ import {
   appendToConsole,
   getNetworkBySessionId
 } from '../state/store.js';
+import { api } from '../lib/adapter.js';
 
 function stripIrcCodes(s) {
   // mIRC color \x03([0-9]{1,2})(,[0-9]{1,2})?
@@ -82,16 +83,16 @@ export function setupIngest({ onError }) {
                 const cmd = acct
                   ? `/msg NickServ IDENTIFY ${acct} ${net.authPassword}`
                   : `/msg NickServ IDENTIFY ${net.authPassword}`;
-                window.sessions.send(net.sessionId, cmd);
+                api.sessions.send(net.sessionId, cmd);
               } catch {}
             }
             // Swallow *all* NickServ DMs/NOTICES (no DM window).
             return;
           }
           // Otherwise, open DM window as usual, then notify it (attention/nudge)
-          window.dm
+          api.dm
             .open(net.sessionId, fromNick, { from: fromNick, kind, text: msg })
-            .then(() => { try { window.dm.notify(net.sessionId, fromNick); } catch {} });
+            .then(() => { try { api.dm.notify(net.sessionId, fromNick); } catch {} });
           return;
         }
       }
@@ -110,7 +111,7 @@ export function setupIngest({ onError }) {
 function publishChanlistSnapshot(net) {
   const items = Array.from(net.chanListTable.values())
     .map(({ name, users, topic }) => ({ name, users: Number(users) || 0, topic: topic || '' }));
-  window.omni.publishUI('chanlist', { sessionId: net.sessionId, items });
+  api.events.emit('ui:chanlist', { sessionId: net.sessionId, items });
 }
 
 function normalizedChanlistItems(msg) {
@@ -224,7 +225,7 @@ function reconcileClientMessage(msg, net) {
         net.userMap.set(u.nick, u);
 
         // Let the DM window know (main caches & fans this out per session/peer)
-        try { window.dm.pushUser?.(net.sessionId, u); } catch {}
+        try { api.dm.pushUser?.(net.sessionId, u); } catch {}
       }
       break;
     }
@@ -232,7 +233,7 @@ function reconcileClientMessage(msg, net) {
       if (msg.user && msg.user.nick) {
         net.userMap.set(msg.user.nick, msg.user);
         net.selfNick = msg.user.nick;
-        try { window.dm.pushUser?.(net.sessionId, msg.user); } catch {}
+        try { api.dm.pushUser?.(net.sessionId, msg.user); } catch {}
 
         // opportunistic auto-identify on connect
         if (net.authType === 'nickserv' && net.authPassword && !net._nickservTried) {
@@ -241,7 +242,7 @@ function reconcileClientMessage(msg, net) {
           const cmd = acct
             ? `/msg NickServ IDENTIFY ${acct} ${net.authPassword}`
             : `/msg NickServ IDENTIFY ${net.authPassword}`;
-          try { window.sessions.send(net.sessionId, cmd); } catch {}
+          try { api.sessions.send(net.sessionId, cmd); } catch {}
         }
       }
       break;
@@ -254,7 +255,7 @@ function reconcileClientMessage(msg, net) {
           const nu = { ...u, nick: new_nick };
           net.userMap.delete(old_nick);
           net.userMap.set(new_nick, nu);
-          try { window.dm.pushUser?.(net.sessionId, nu); } catch {}
+          try { api.dm.pushUser?.(net.sessionId, nu); } catch {}
         }
         if (net.selfNick && old_nick === net.selfNick) net.selfNick = new_nick;
       }

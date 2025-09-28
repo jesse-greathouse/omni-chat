@@ -1,107 +1,100 @@
-// preload.cjs
 const { contextBridge, ipcRenderer } = require('electron');
 
-/* helpers */
-function safeOn(channel, cb) {
-  // wrap to avoid unhandled exceptions crossing the bridge
-  const fn = (_e, payload) => { try { cb(payload); } catch {} };
-  ipcRenderer.on(channel, fn);
-  return () => ipcRenderer.off(channel, fn);
-}
-function safeInvoke(channel, ...args) {
-  return ipcRenderer.invoke(channel, ...args);
-}
-function safeSend(channel, payload) {
-  ipcRenderer.send(channel, payload);
-}
+// Tiny bus
+const bus = (() => {
+  const m = new Map();
+  return {
+    on(topic, fn) {
+      const t = String(topic);
+      const arr = m.get(t) || [];
+      arr.push(fn);
+      m.set(t, arr);
+      return () => {
+        const cur = m.get(t) || [];
+        const i = cur.indexOf(fn);
+        if (i >= 0) cur.splice(i, 1);
+        if (cur.length === 0) m.delete(t);
+      };
+    },
+    emit(topic, payload) {
+      const arr = m.get(String(topic));
+      if (!arr) return;
+      for (const fn of arr.slice()) { try { fn(payload); } catch {} }
+    }
+  };
+})();
 
-/* bootstrap */
-contextBridge.exposeInMainWorld('bootstrap', {
-  runInTerminal: () => safeInvoke('bootstrap:runTerminal'),
-  start:         () => safeInvoke('bootstrap:start'),
-  openLogsDir:   () => safeInvoke('bootstrap:openLogs'),
-  proceedIfReady:() => safeSend('bootstrap:proceed-if-ready'),
+// Still support the 'evt' multiplex channel if main sends it
+ipcRenderer.on('evt', (_e, { topic, payload }) => { if (topic) bus.emit(topic, payload); });
 
-  onLog:   (cb) => safeOn('bootstrap:log',   (line) => cb(String(line))),
-  onDone:  (cb) => safeOn('bootstrap:done',  () => cb()),
-  onError: (cb) => safeOn('bootstrap:error', (code) => cb(code)),
-});
+// NEW: forward main's direct channels into the bus under the names the renderer uses
+ipcRenderer.on('session:status', (_e, p) => bus.emit('sessions:status', p));
+ipcRenderer.on('session:error',  (_e, p) => bus.emit('sessions:error',  p));
+ipcRenderer.on('session:data',   (_e, p) => bus.emit('sessions:data',   p));
 
-/*-- omni--- */
-contextBridge.exposeInMainWorld('omni', {
-  // Settings
-  getSetting:      (key, fallback) => safeInvoke('settings:get', key, fallback),
-  setSetting:      (key, value)    => safeInvoke('settings:set', key, value),
-  getAllSettings:  ()              => safeInvoke('settings:all'),
-  getSettingsPath: ()              => safeInvoke('settings:path'),
+ipcRenderer.on('dm:init',        (_e, p) => bus.emit('dm:init',        p));
+ipcRenderer.on('dm:user',        (_e, p) => bus.emit('dm:user',        p));
+ipcRenderer.on('dm:line',        (_e, p) => bus.emit('dm:line',        p));
+ipcRenderer.on('dm:play-sound',  ()      => bus.emit('dm:play-sound'));
 
-  // Server profiles
-  profilesList:    ()                          => safeInvoke('profiles:list'),
-  profilesUpsert:  (host, profile)             => safeInvoke('profiles:upsert', host, profile),
-  profilesDelete:  (host)                      => safeInvoke('profiles:delete', host),
-  profilesResolve: (host)                      => safeInvoke('profiles:resolve', host),
+ipcRenderer.on('bootstrap:log',  (_e, p) => bus.emit('bootstrap:log',  p));
+ipcRenderer.on('bootstrap:done', ()      => bus.emit('bootstrap:done'));
+ipcRenderer.on('bootstrap:error',(_e, p) => bus.emit('bootstrap:error',p));
 
-  // UI pub/sub
-  publishUI: (event, payload) => {
-    // don’t let arbitrary objects be used as channel suffixes
-    const name = String(event || '');
-    if (!name) return;
-    safeSend('ui-pub', { event: name, payload });
+const onTopic = (topic) => (fn) => bus.on(topic, fn);
+
+const api = {
+  events: {
+    on:   (topic, fn) => bus.on(topic, fn),
+    off:  (_topic, _fn) => { /* on() returns a disposer; keep as-is */ },
+    emit: (topic, payload) => bus.emit(topic, payload),
   },
-  onUI: (event, cb) => {
-    const name = String(event || '');
-    if (!name) return () => {};
-    return safeOn(`ui-sub:${name}`, (payload) => cb(payload));
+
+  // Use main's existing singular channel names
+  sessions: {
+    start: (id, opts) => ipcRenderer.invoke('session:start', id, opts),
+    stop:  (id)       => ipcRenderer.invoke('session:stop',  id),
+    // optional, you have restart; expose if you need it:
+    restart:(id, opts)=> ipcRenderer.invoke('session:restart', id, opts),
+    send:  (id, line) => ipcRenderer.send('session:send', { id, line }),
+    onStatus: onTopic('sessions:status'),
+    onError:  onTopic('sessions:error'),
+    onData:   onTopic('sessions:data'),
   },
-});
 
-/* sessions- */
-contextBridge.exposeInMainWorld('sessions', {
-  start:   (id, opts) => safeInvoke('session:start', id, opts),
-  stop:    (id)       => safeInvoke('session:stop', id),
-  restart: (id, opts) => safeInvoke('session:restart', id, opts),
+  dm: {
+    open:        (sessionId, peer, bootLine) => ipcRenderer.invoke('dm:open', { sessionId, peer, bootLine }),
+    notify:      (sessionId, peer)           => ipcRenderer.send('dm:notify', { sessionId, peer }),
+    requestUser: (sessionId, nick)           => ipcRenderer.send('dm:request-user', { sessionId, nick }),
+    // pushUser is main->renderer; not called from renderer
+    pushUser:    () => {},
+  },
 
-  send: (id, line) => safeSend('session:send', { id, line }),
+  // Match main's settings API (use 'settings:all' instead of the missing 'settings:getAll')
+  settings: {
+    getAll: ()                 => ipcRenderer.invoke('settings:all'),
+    set:    (key, value)       => ipcRenderer.invoke('settings:set', key, value),
+  },
 
-  onData:   (cb) => safeOn('session:data',   (payload) => cb(payload)),
-  onStatus: (cb) => safeOn('session:status', (payload) => cb(payload)),
-  onError:  (cb) => safeOn('session:error',  (payload) => cb(payload)),
-});
+  profiles: {
+    list:    ()                      => ipcRenderer.invoke('profiles:list'),
+    resolve: (host)                  => ipcRenderer.invoke('profiles:resolve', host),
+    upsert:  (host, payload)         => ipcRenderer.invoke('profiles:upsert', host, payload),
+    del:     (host)                  => ipcRenderer.invoke('profiles:delete', host),
+  },
 
-/* dm */
-/*
-  These are the important bits that let ingest.js push user info and
-  the DM window subscribe to it. This is what fixes the “User null/unknown not found”
-  symptom when WHOIS/user snapshots arrive.
-*/
-contextBridge.exposeInMainWorld('dm', {
-  onPlaySound: (cb) => safeOn('dm:play-sound', () => cb?.()),
+  // Match main's bootstrap channels
+  bootstrap: {
+    runInTerminal:  () => ipcRenderer.invoke('bootstrap:runTerminal'),
+    // if you ever need background mode from renderer:
+    startInBackground: () => ipcRenderer.invoke('bootstrap:start'),
+    openLogsDir:    () => ipcRenderer.invoke('bootstrap:openLogs'),
+    proceedIfReady: () => ipcRenderer.send('bootstrap:proceed-if-ready'),
 
-  // Ask main to open (or focus) a DM window; main should respond with 'dm:init'
-  open: (sessionId, peer, bootLine) =>
-    safeInvoke('dm:open', { sessionId, peer, bootLine }),
+    onLog:   onTopic('bootstrap:log'),
+    onDone:  onTopic('bootstrap:done'),
+    onError: onTopic('bootstrap:error'),
+  },
+};
 
-  // Ask main to gently notify the specific DM window:
-  //  - if minimized  → attention()
-  //  - else if not focused → nudge()
-  //  - else do nothing
-  notify: (sessionId, peer) =>
-    safeSend('dm:notify', { sessionId, peer }),
-
-  // DM window init payload from main
-  onInit: (cb) => safeOn('dm:init', (payload) => cb(payload)),
-
-  // New DM line routed from main (ingest → main → dm window)
-  onLine: (cb) => safeOn('dm:line', (payload) => cb(payload)),
-
-  // Renderer → main: push a fresh/updated user object for the DM window
-  pushUser: (sessionId, user) =>
-    safeSend('dm:push-user', { sessionId, user }),
-
-  // DM window subscribes to user updates (WHOIS, account, away, etc.)
-  onUser: (cb) => safeOn('dm:user', (payload) => cb(payload)),
-
-  // DM window can request user info on first paint / when peer becomes known
-  requestUser: (sessionId, nick) =>
-    safeSend('dm:request-user', { sessionId, nick }),
-});
+contextBridge.exposeInMainWorld('api', api);

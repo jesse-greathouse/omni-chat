@@ -1,3 +1,4 @@
+import { api } from '../lib/adapter.js';
 export class PrivmsgPane {
   constructor(net, peerNick, onClose) {
     this.net = net;
@@ -58,7 +59,7 @@ export class PrivmsgPane {
       const text = this.input.value.trim();
       if (!text) return;
       if (this.net?.sessionId) {
-        window.sessions.send(this.net.sessionId, `/msg ${this.peer} ${text}`);
+        api.sessions.send(this.net.sessionId, `/msg ${this.peer} ${text}`);
         this.appendLine(`> ${text}`);
         this.input.value = '';
       }

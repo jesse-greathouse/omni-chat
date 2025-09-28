@@ -2,6 +2,7 @@ import { store, ensureNetwork, activateNetwork, uiRefs } from './state/store.js'
 import { setupIngest } from './irc/ingest.js';
 import { ErrorDock } from './ui/ErrorDock.js';
 import { createProfilesPanel } from './ui/connectionForm.js';
+import { api } from './lib/adapter.js';
 
 uiRefs.viewsEl      = document.getElementById('views');
 uiRefs.errorDockEl  = document.getElementById('errorDock');
@@ -56,8 +57,8 @@ function activateTab(id) {
   for (const t of tabs.values()) {
     t.layerEl.classList.toggle('hidden', t.id !== id);
   }
-  // tell auxiliary windows
-  window.omni.publishUI('active-session', { id });
+  // broadcast via central UI bus
+  api.events.emit('ui:active-session', { id });
 
   const t = tabs.get(id);
   if (t?.netId) activateNetwork(t.netId);
@@ -67,7 +68,7 @@ function activateTab(id) {
 function closeTab(id) {
   const t = tabs.get(id);
   if (t) {
-    try { window.sessions.stop(id); } catch {}
+    try { api.sessions.stop(id); } catch {}
     try { t.layerEl.remove(); } catch {}
     tabs.delete(id);
   }
@@ -103,7 +104,7 @@ function mountProfilesPanel(layerEl) {
 
       // 2) start this tab’s session
       try {
-        await window.sessions.start(activeSessionId, opts);
+        await api.sessions.start(activeSessionId, opts);
         // Success → remove the form in *all* cases so it doesn't overlay chat input.
         try { panel.remove(); } catch {}
       } catch (e) {
@@ -122,16 +123,16 @@ function mountProfilesPanel(layerEl) {
 // ingest wiring
 setupIngest({ onError: (s) => errors.append(s) });
 
-window.sessions.onStatus(({ id, status }) => {
+api.sessions.onStatus?.(({ id, status }) => {
   // no-op for header; keep if you later want per-session status handling
 });
 
-window.sessions.onError(({ id, message }) => {
+api.sessions.onError?.(({ id, message }) => {
   if (tabs.has(id)) errors.append(`[${id}] ${message}`);
 });
 
 // Feed ALL sessions’ lines into the ingester (per-session routing happens inside)
-window.sessions.onData(({ id, line }) => {
+api.sessions.onData?.(({ id, line }) => {
   try {
     store.ingest(line, id);
   } catch {}

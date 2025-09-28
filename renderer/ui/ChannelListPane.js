@@ -1,3 +1,5 @@
+import { api } from '../lib/adapter.js';
+
 export class ChannelListPane {
   constructor(net) {
     this.net = net;
@@ -63,7 +65,7 @@ export class ChannelListPane {
     this.refreshBtn.addEventListener('click', () => this.requestList());
 
     // subscribe to chanlist snapshots (already published by ingest)
-    window.omni.onUI('chanlist', (payload) => {
+    api.events.on('ui:chanlist', (payload) => {
       if (!payload || payload.sessionId !== this.net.sessionId) return;
       this.items = Array.isArray(payload.items) ? payload.items : [];
       this.render();
@@ -84,7 +86,7 @@ export class ChannelListPane {
   requestList() {
     if (!this.net?.sessionId) return;
     this.setLoading(true);
-    window.sessions.send(this.net.sessionId, '/list * 30');
+    api.sessions.send(this.net.sessionId, '/list * 30');
   }
 
   setLoading(on) {
@@ -118,7 +120,7 @@ export class ChannelListPane {
       btn.addEventListener('click', () => {
         if (!this.net?.sessionId) return;
         const chan = name.startsWith('#') || name.startsWith('&') ? name : `#${name}`;
-        window.sessions.send(this.net.sessionId, `/join ${chan}`);
+        api.sessions.send(this.net.sessionId, `/join ${chan}`);
       });
       tdName.appendChild(btn);
 

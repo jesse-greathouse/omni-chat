@@ -8,6 +8,8 @@ const lines = [];
 const textNode = document.createTextNode('');
 logEl.appendChild(textNode);
 
+import { api } from './lib/adapter.js';
+
 // notification sound
 let ding = null;
 try {
@@ -16,7 +18,7 @@ try {
 } catch {}
 
 // Play when main signals a new PM (same trigger as taskbar overlay)
-window.dm.onPlaySound?.(() => {
+api.events.on('dm:play-sound', () => {
   if (!ding) return;
   try { ding.currentTime = 0; } catch {}
   ding.play?.().catch(()=>{});
@@ -25,7 +27,7 @@ window.dm.onPlaySound?.(() => {
 function requestWhois() {
   if (!state.sessionId || !state.peer) return;
   // using "<nick> <nick>" often yields richer info (account, etc.)
-  try { window.sessions.send(state.sessionId, `/whois ${state.peer} ${state.peer}`); } catch {}
+  try { api.sessions.send(state.sessionId, `/whois ${state.peer} ${state.peer}`); } catch {}
 }
 
 function append(s){
@@ -72,7 +74,7 @@ function normalizeUser(u) {
   };
 }
 
-window.dm.onInit(({ sessionId, peer, bootLines }) => {
+api.events.on('dm:init', ({ sessionId, peer, bootLines }) => {
   state.sessionId = sessionId;
   // remove undefined `nick` fallback
   state.peer = peer || bootLines?.peer || bootLines?.from || bootLines?.nick || bootLines?.username || null;
@@ -80,7 +82,7 @@ window.dm.onInit(({ sessionId, peer, bootLines }) => {
   input.placeholder = state.peer ? `Message ${state.peer}` : `Message user`;
   // only request if we actually have a nick
   if (state.peer) {
-    try { window.dm.requestUser?.(state.sessionId, state.peer); } catch {}
+    try { api.dm.requestUser?.(state.sessionId, state.peer); } catch {}
     requestWhois();
   }
   if (Array.isArray(bootLines)) {
@@ -140,7 +142,7 @@ function renderProfile(u) {
 }
 
 // live updates: main will push user objects for our peer
-window.dm.onUser?.((payload) => {
+api.events.on('dm:user', (payload) => {
   if (!payload) return;
   if (payload.sessionId !== state.sessionId) return;
   const u = payload.user || {};
@@ -164,7 +166,7 @@ window.dm.onUser?.((payload) => {
 function sendNow() {
   const t = input.value.trim();
   if (!t || !state.sessionId || !state.peer) return;
-  try { window.sessions.send(state.sessionId, `/msg ${state.peer} ${t}`); } catch {};
+  try { api.sessions.send(state.sessionId, `/msg ${state.peer} ${t}`); } catch {};
   append(`> ${t}`);
   input.value = '';
 }
@@ -173,7 +175,7 @@ btnSend.addEventListener('click', sendNow);
 input.addEventListener('keydown', (e)=>{ if (e.key === 'Enter') sendNow(); });
 
 // receive routed DM lines (sent directly from main)
-window?.dm?.onLine?.((p) => {
+api.events.on('dm:line', (p) => {
   if (!p) return;
   if (p.sessionId !== state.sessionId) return;
 
@@ -185,7 +187,7 @@ window?.dm?.onLine?.((p) => {
       document.title = String(state.peer);
       input.placeholder = `Message ${state.peer}`;
       // now that we have a peer, ask for a snapshot so the header can populate
-      try { window.dm.requestUser?.(state.sessionId, state.peer); } catch {}
+      try { api.dm.requestUser?.(state.sessionId, state.peer); } catch {}
       requestWhois();
       // re-render the placeholder with the actual nick
       renderProfile(null);
