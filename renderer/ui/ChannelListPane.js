@@ -119,7 +119,7 @@ export class ChannelListPane {
       btn.textContent = name;
       btn.addEventListener('click', () => {
         if (!this.net?.sessionId) return;
-        const chan = name.startsWith('#') || name.startsWith('&') ? name : `#${name}`;
+        const chan = (name.startsWith('#') || name.startsWith('&')) ? name : `#${name}`;
         api.sessions.send(this.net.sessionId, `/join ${chan}`);
       });
       tdName.appendChild(btn);
