@@ -8,7 +8,21 @@ const lines = [];
 const textNode = document.createTextNode('');
 logEl.appendChild(textNode);
 
-import { api } from './lib/adapter.js';
+import { api, events, EVT } from './lib/adapter.js';
+
+let isFocused = document.hasFocus();
+window.addEventListener('focus', () => { isFocused = true; });
+window.addEventListener('blur',  () => { isFocused = false; });
+
+try {
+  // Filled by preload when opening the DM window (if available)
+  state.sessionId = api?.dm?.current?.sessionId ?? state.sessionId;
+  state.peer      = api?.dm?.current?.peer      ?? state.peer;
+  if (state.peer) {
+    document.title = String(state.peer);
+    input.placeholder = `Message ${state.peer}`;
+  }
+} catch {}
 
 // notification sound
 let ding = null;
@@ -17,8 +31,13 @@ try {
   ding.preload = 'auto';
 } catch {}
 
-// Play when main signals a new PM (same trigger as taskbar overlay)
-api.events.on('dm:play-sound', () => {
+// Play when main/canon signals a DM notify
+events.on(EVT.DM_NOTIFY, (p) => {
+  if (!p) return;
+  // Only notify for this window's conversation
+  if (state.sessionId && p.sessionId && p.sessionId !== state.sessionId) return;
+  if (state.peer && p.peer &&
+      String(p.peer).toLowerCase() !== String(state.peer).toLowerCase()) return;
   if (!ding) return;
   try { ding.currentTime = 0; } catch {}
   ding.play?.().catch(()=>{});
@@ -74,22 +93,6 @@ function normalizeUser(u) {
   };
 }
 
-api.events.on('dm:init', ({ sessionId, peer, bootLines }) => {
-  state.sessionId = sessionId;
-  // remove undefined `nick` fallback
-  state.peer = peer || bootLines?.peer || bootLines?.from || bootLines?.nick || bootLines?.username || null;
-  document.title = String(state.peer || 'DM');
-  input.placeholder = state.peer ? `Message ${state.peer}` : `Message user`;
-  // only request if we actually have a nick
-  if (state.peer) {
-    try { api.dm.requestUser?.(state.sessionId, state.peer); } catch {}
-    requestWhois();
-  }
-  if (Array.isArray(bootLines)) {
-    for (const l of bootLines) append(`${l.from}${l.kind === 'NOTICE' ? ' (NOTICE)' : ''}: ${l.text}`);
-  }
-});
-
 // Render the header grid from a user object (or show "not found")
 function renderProfile(u) {
   profileEl.innerHTML = '';
@@ -142,9 +145,11 @@ function renderProfile(u) {
 }
 
 // live updates: main will push user objects for our peer
-api.events.on('dm:user', (payload) => {
+events.on(EVT.DM_USER, (payload) => {
   if (!payload) return;
-  if (payload.sessionId !== state.sessionId) return;
+  // Learn sessionId on first event, then filter thereafter
+  if (!state.sessionId && payload.sessionId) state.sessionId = payload.sessionId;
+  if (state.sessionId && payload.sessionId !== state.sessionId) return;
   const u = payload.user || {};
   const nickRaw = u.nick || u.nickname || u.name || u.user || u.username;
   // If we still don't know who the peer is, adopt it from the first good payload.
@@ -175,9 +180,11 @@ btnSend.addEventListener('click', sendNow);
 input.addEventListener('keydown', (e)=>{ if (e.key === 'Enter') sendNow(); });
 
 // receive routed DM lines (sent directly from main)
-api.events.on('dm:line', (p) => {
+events.on(EVT.DM_LINE, (p) => {
   if (!p) return;
-  if (p.sessionId !== state.sessionId) return;
+  // Learn sessionId on first line, then filter thereafter
+  if (!state.sessionId && p.sessionId) state.sessionId = p.sessionId;
+  if (state.sessionId && p.sessionId !== state.sessionId) return;
 
   // If we still don't know the peer, adopt it from the very first line.
   if (!state.peer) {
@@ -189,8 +196,6 @@ api.events.on('dm:line', (p) => {
       // now that we have a peer, ask for a snapshot so the header can populate
       try { api.dm.requestUser?.(state.sessionId, state.peer); } catch {}
       requestWhois();
-      // re-render the placeholder with the actual nick
-      renderProfile(null);
     }
   }
 
@@ -201,6 +206,15 @@ api.events.on('dm:line', (p) => {
     if (got !== want) return;
   }
   append(`${p.from}${p.kind === 'NOTICE' ? ' (NOTICE)' : ''}: ${p.text}`);
+
+  // If this is a *new* PRIVMSG for this DM and the window isn't visible/focused,
+  // trigger a DM notification (tray/badge/sound via main).
+  // "Minimized" maps to document.hidden || !isFocused in the renderer.
+  const isPrivmsg = (p.kind || '').toUpperCase() === 'PRIVMSG' || !p.kind; // be tolerant
+  const looksMinimized = document.hidden || !isFocused;
+  if (isPrivmsg && looksMinimized && state.sessionId && state.peer) {
+    try { api.dm.notify(state.sessionId, state.peer); } catch {}
+  }
 });
 
 renderProfile(null);

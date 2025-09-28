@@ -1,4 +1,4 @@
-import { api } from '../lib/adapter.js';
+import { api, events, EVT } from '../lib/adapter.js';
 
 export class ChannelListPane {
   constructor(net) {
@@ -64,8 +64,8 @@ export class ChannelListPane {
     // events
     this.refreshBtn.addEventListener('click', () => this.requestList());
 
-    // subscribe to chanlist snapshots (already published by ingest)
-    api.events.on('ui:chanlist', (payload) => {
+    // subscribe to canonical chan snapshots
+    events.on(EVT.CHAN_SNAPSHOT, (payload) => {
       if (!payload || payload.sessionId !== this.net.sessionId) return;
       this.items = Array.isArray(payload.items) ? payload.items : [];
       this.render();

@@ -2,7 +2,7 @@ import { store, ensureNetwork, activateNetwork, uiRefs } from './state/store.js'
 import { setupIngest } from './irc/ingest.js';
 import { ErrorDock } from './ui/ErrorDock.js';
 import { createProfilesPanel } from './ui/connectionForm.js';
-import { api } from './lib/adapter.js';
+import { api, events, EVT } from './lib/adapter.js';
 
 uiRefs.viewsEl      = document.getElementById('views');
 uiRefs.errorDockEl  = document.getElementById('errorDock');
@@ -57,8 +57,9 @@ function activateTab(id) {
   for (const t of tabs.values()) {
     t.layerEl.classList.toggle('hidden', t.id !== id);
   }
-  // broadcast via central UI bus
-  api.events.emit('ui:active-session', { id });
+  
+  // canonical UI topic
+  events.emit(EVT.UI_ACTIVE, { id });
 
   const t = tabs.get(id);
   if (t?.netId) activateNetwork(t.netId);
@@ -123,19 +124,24 @@ function mountProfilesPanel(layerEl) {
 // ingest wiring
 setupIngest({ onError: (s) => errors.append(s) });
 
-api.sessions.onStatus?.(({ id, status }) => {
-  // no-op for header; keep if you later want per-session status handling
+events.on(EVT.CONN_STATUS, ({ sessionId, status }) => {
+  // optional: UI header, etc.
 });
 
-api.sessions.onError?.(({ id, message }) => {
-  if (tabs.has(id)) errors.append(`[${id}] ${message}`);
+// Canonical bus: errors
+events.on(EVT.CONN_ERROR, ({ sessionId, message }) => {
+  if (tabs.has(sessionId)) errors.append(`[${sessionId}] ${message}`);
 });
 
-// Feed ALL sessions’ lines into the ingester (per-session routing happens inside)
-api.sessions.onData?.(({ id, line }) => {
-  try {
-    store.ingest(line, id);
-  } catch {}
+// Canonical bus: raw line stream
+events.on(EVT.CONN_LINE, ({ sessionId, line }) => {
+  try { store.ingest(line, sessionId); } catch {}
+});
+
+
+// central UI error topic → dock
+events.on(EVT.ERROR, ({ scope, message }) => {
+  errors.append(`[${scope}] ${message}`);
 });
 
 openNewTab();

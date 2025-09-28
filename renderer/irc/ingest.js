@@ -4,7 +4,7 @@ import {
   appendToConsole,
   getNetworkBySessionId
 } from '../state/store.js';
-import { api } from '../lib/adapter.js';
+import { api, events, EVT } from '../lib/adapter.js';
 
 function stripIrcCodes(s) {
   // mIRC color \x03([0-9]{1,2})(,[0-9]{1,2})?
@@ -89,10 +89,9 @@ export function setupIngest({ onError }) {
             // Swallow *all* NickServ DMs/NOTICES (no DM window).
             return;
           }
-          // Otherwise, open DM window as usual, then notify it (attention/nudge)
-          api.dm
-            .open(net.sessionId, fromNick, { from: fromNick, kind, text: msg })
-            .then(() => { try { api.dm.notify(net.sessionId, fromNick); } catch {} });
+
+          // Open DM window as usual, then notify it (attention/nudge)
+          api.dm.open(net.sessionId, fromNick, { from: fromNick, kind, text: msg }).catch(()=>{});
           return;
         }
       }
@@ -111,7 +110,10 @@ export function setupIngest({ onError }) {
 function publishChanlistSnapshot(net) {
   const items = Array.from(net.chanListTable.values())
     .map(({ name, users, topic }) => ({ name, users: Number(users) || 0, topic: topic || '' }));
-  api.events.emit('ui:chanlist', { sessionId: net.sessionId, items });
+    events.emit(EVT.CHAN_SNAPSHOT, /** @type {import('../lib/adapter.js').ChanSnapshot} */({
+      sessionId: net.sessionId,
+      items
+    }));  
 }
 
 function normalizedChanlistItems(msg) {
@@ -224,7 +226,12 @@ function reconcileClientMessage(msg, net) {
 
         net.userMap.set(u.nick, u);
 
-        // Let the DM window know (main caches & fans this out per session/peer)
+        // Broadcast locally via canonical topic
+        events.emit(EVT.DM_USER, /** @type {import('../lib/adapter.js').DMUser} */({
+          sessionId: net.sessionId,
+          user: u
+        }));
+        // And keep existing main-process path for multi-window DMs (back-compat)
         try { api.dm.pushUser?.(net.sessionId, u); } catch {}
       }
       break;
@@ -233,6 +240,7 @@ function reconcileClientMessage(msg, net) {
       if (msg.user && msg.user.nick) {
         net.userMap.set(msg.user.nick, msg.user);
         net.selfNick = msg.user.nick;
+        events.emit(EVT.DM_USER, { sessionId: net.sessionId, user: msg.user });
         try { api.dm.pushUser?.(net.sessionId, msg.user); } catch {}
 
         // opportunistic auto-identify on connect
