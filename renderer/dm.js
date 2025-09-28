@@ -9,6 +9,7 @@ const textNode = document.createTextNode('');
 logEl.appendChild(textNode);
 
 import { api, events, EVT } from './lib/adapter.js';
+import { normalizeUser } from './protocol/index.js';
 
 let isFocused = document.hasFocus();
 window.addEventListener('focus', () => { isFocused = true; });
@@ -53,44 +54,6 @@ function append(s){
   lines.push(s);
   textNode.nodeValue = lines.join('\n') + '\n';
   requestAnimationFrame(()=>{ logEl.scrollTop = logEl.scrollHeight; });
-}
-
-/* ---------------------------
-   Normalize backend user JSON
-   ---------------------------
-   Back end sends:
-     root:   nick, real_name/realname, ident, host, account, away, modes, channel_modes, whois
-     whois:  user, host, realname, server, server_info, account, channels, idle_secs, signon_ts, actual_host, secure
-*/
-function normalizeUser(u) {
-  if (!u || typeof u !== 'object') return null;
-  const W = u.whois || {};
-  const pick = (...xs) => {
-    for (const v of xs) if (v !== undefined && v !== null && v !== '') return v;
-    return null;
-  };
-  const arr = (a) => Array.isArray(a) ? a : [];
-
-  // prefer more accurate host from WHOIS if available
-  const host = pick(u.host, W.actual_host, W.host);
-
-  return {
-    nick:        u.nick ?? null,
-    user:        pick(u.user, u.username, u.ident, W.user),   // "ident" at root, "user" in whois
-    host,
-    realname:    pick(u.realname, u.real_name, W.realname, u.gecos),
-    account:     pick(u.account, W.account),
-    away:        u.away ?? null,
-    away_reason: pick(u.away_reason, W.away_reason),
-    server:      pick(W.server, u.server),
-    server_info: pick(W.server_info, u.server_info),
-    channels:    arr(pick(W.channels, u.channels)),
-    idle_secs:   pick(W.idle_secs, u.idle),
-    signon_ts:   pick(W.signon_ts, u.signon_ts),
-    secure:      pick(W.secure, u.secure),
-    modes:       arr(u.modes),
-    channel_modes: u.channel_modes || null,
-  };
 }
 
 // Render the header grid from a user object (or show "not found")

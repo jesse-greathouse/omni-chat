@@ -1,17 +1,6 @@
-import {
-  store,
-  ensureChannel,
-  appendToConsole,
-  getNetworkBySessionId
-} from '../state/store.js';
+import { store, ensureChannel, appendToConsole, getNetworkBySessionId } from '../state/store.js';
 import { api, events, EVT } from '../lib/adapter.js';
-
-function stripIrcCodes(s) {
-  // mIRC color \x03([0-9]{1,2})(,[0-9]{1,2})?
-  return String(s)
-    .replace(/\x03(\d{1,2})(,\d{1,2})?/g, '')
-    .replace(/[\x00-\x1F\x7F]/g, ''); // bold(\x02), italic(\x1D), underline(\x1F), reset(\x0F), etc.
-}
+import { classify, normalizeChanlistItems, isNickServ } from '../protocol/index.js';
 
 export function setupIngest({ onError }) {
   // IMPORTANT: now ingests **per session**
@@ -32,68 +21,38 @@ export function setupIngest({ onError }) {
         try { reconcileClientMessage(JSON.parse(line), net); return; } catch {}
       }
 
-      // IRC raws
-      // LIST numerics (suppress to keep UI snappy)
-      const m = /^:?[^ ]*\s+(\d{3})\b/.exec(line);
-      if (m && (m[1] === '321' || m[1] === '322' || m[1] === '323')) return;
+      // IRC raws → classify once, route by type
+      const c = classify(line, net.selfNick);
 
-      // PRIVMSG/NOTICE to a channel → channel pane
-      const chMsg = /^:([^!]+)!([^\s]+)\s+(PRIVMSG|NOTICE)\s+([#&][^\s,]+)\s+:(.*)$/.exec(line);
-      if (chMsg) {
-        const from   = chMsg[1];
-        const kind   = chMsg[3];
-        const target = chMsg[4];
-        const msg    = chMsg[5];
-        const chan = ensureChannel(net, target);
-        const marker = ' • '; // or ' (NOTICE) '
-        chan.pane.appendLine(`${from}${kind === 'NOTICE' ? marker : ''}: ${msg}`);
+      // LIST numerics (suppress to keep UI snappy)
+      if (c.type === 'other' && (c.numeric === 321 || c.numeric === 322 || c.numeric === 323)) return;
+
+      if (c.type === 'chan') {
+        const chan = ensureChannel(net, c.target);
+        const marker = ' • ';
+        chan.pane.appendLine(`${c.from}${c.kind === 'NOTICE' ? marker : ''}: ${c.text}`);
         return;
       }
 
-      // PRIVMSG/NOTICE to *us* (DM) → open/append DM window (separate BrowserWindow)
-      // Be permissive: prefix may or may not include !ident@host.
-      //   :NickServ NOTICE you :text
-      //   :NickServ!NickServ@services PRIVMSG you :text
-      const cleaned = stripIrcCodes(line)
-      const dmMsg =
-        /^:([^ ]+)\s+(PRIVMSG|NOTICE)\s+([^\s#&][^\s]*)\s+:(.*)$/.exec(cleaned);
-      if (dmMsg) {
-        const fromFull = dmMsg[1];                 // may be "nick" or "nick!ident@host"
-        const kind     = dmMsg[2];
-        const target   = dmMsg[3];                 // intended to be our nick
-        const msg      = dmMsg[4];
-
-        // Normalize sender nick from prefix
-        const fromNick = String(fromFull.split('!')[0] || '').replace(/^[~&@%+]/, '');
-        const isTargetUs = !net.selfNick
-          ? true
-          : String(target).localeCompare(net.selfNick, undefined, { sensitivity: 'accent' }) === 0;
-
-        if (isTargetUs) {
-          // NickServ: never open a DM window, regardless of message content.
-          const isNickServ = fromNick.localeCompare('NickServ', undefined, { sensitivity: 'accent' }) === 0;
-          if (isNickServ) {
-            const hasPass = !!net.authPassword;
-            const wantsNickServ = (net.authType === 'nickserv');
-            // For NickServ we use NICK + PASSWORD (username is ignored)
-            if (wantsNickServ && hasPass && !net._nickservTried) {
-              net._nickservTried = true;
-              try {
-                const acct = (net.authUsername && String(net.authUsername).trim()) || null;
-                const cmd = acct
-                  ? `/msg NickServ IDENTIFY ${acct} ${net.authPassword}`
-                  : `/msg NickServ IDENTIFY ${net.authPassword}`;
-                api.sessions.send(net.sessionId, cmd);
-              } catch {}
-            }
-            // Swallow *all* NickServ DMs/NOTICES (no DM window).
-            return;
+      if (c.type === 'dm') {
+        if (isNickServ(c.from)) {
+          // Auto-identify (NickServ) and swallow messages.
+          const wants = (net.authType === 'nickserv');
+          if (wants && net.authPassword && !net._nickservTried) {
+            net._nickservTried = true;
+            try {
+              const acct = (net.authUsername && String(net.authUsername).trim()) || null;
+              const cmd = acct
+                ? `/msg NickServ IDENTIFY ${acct} ${net.authPassword}`
+                : `/msg NickServ IDENTIFY ${net.authPassword}`;
+              api.sessions.send(net.sessionId, cmd);
+            } catch {}
           }
-
-          // Open DM window as usual, then notify it (attention/nudge)
-          api.dm.open(net.sessionId, fromNick, { from: fromNick, kind, text: msg }).catch(()=>{});
           return;
         }
+        // Open DM window as usual, then notify it (attention/nudge)
+        api.dm.open(net.sessionId, c.from, { from: c.from, kind: c.kind, text: c.text }).catch(()=>{});
+        return;
       }
 
       // everything else → this network’s console
@@ -110,31 +69,10 @@ export function setupIngest({ onError }) {
 function publishChanlistSnapshot(net) {
   const items = Array.from(net.chanListTable.values())
     .map(({ name, users, topic }) => ({ name, users: Number(users) || 0, topic: topic || '' }));
-    events.emit(EVT.CHAN_SNAPSHOT, /** @type {import('../lib/adapter.js').ChanSnapshot} */({
-      sessionId: net.sessionId,
-      items
-    }));  
-}
-
-function normalizedChanlistItems(msg) {
-  const out = [];
-  const src = msg?.payload || msg?.data || msg?.chanlist || msg || {};
-  const push = (o, k) => {
-    const name = o?.name || o?.channel || o?.key || k;
-    if (!name) return;
-    const users = Number(
-      o?.users ?? o?.user_count ?? o?.members ?? o?.num_users ?? 0
-    ) || 0;
-    const topic = typeof o?.topic === 'string' ? o.topic : '';
-    out.push({ name, users, topic });
-  };
-  if (Array.isArray(src.items)) src.items.forEach(push);
-  else if (Array.isArray(src.entries)) src.entries.forEach(push);
-  else if (Array.isArray(src.channels)) src.channels.forEach((o) => push(o));
-  else if (src.channels && typeof src.channels === 'object') {
-    for (const [k, v] of Object.entries(src.channels)) push(v, k);
-  }
-  return out;
+  events.emit(EVT.CHAN_SNAPSHOT, /** @type {import('../lib/adapter.js').ChanSnapshot} */({
+    sessionId: net.sessionId,
+    items
+  }));
 }
 
 function reconcileClientMessage(msg, net) {
@@ -188,7 +126,7 @@ function reconcileClientMessage(msg, net) {
       if (op === 'snapshot') {
         net.chanListTable.clear();
       }
-      for (const it of normalizedChanlistItems(msg)) {
+      for (const it of normalizeChanlistItems(msg)) {
         net.chanListTable.set(it.name, it);
       }
       const removals = Array.isArray(src.remove) ? src.remove
@@ -201,7 +139,7 @@ function reconcileClientMessage(msg, net) {
       break;
     }
     case 'user': {
-      // Accept: {type:'user', user:{...}}  OR  {type:'user', ...topLevelFields}  OR  {type:'user', users:[...]}
+      // Accept: {type:'user', user:{...}}  OR  {type:'user', ...topLevelFields}  OR  {type:'user', users:[...]]
       const candidate =
         msg.user ?? msg.payload ?? msg.data ?? msg; // fall back to root if needed
 
