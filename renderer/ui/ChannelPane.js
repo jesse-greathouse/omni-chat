@@ -29,7 +29,11 @@ export class ChannelPane {
 
     this.usersEl = document.createElement('div');
     this.usersEl.className = 'users';
-    this.usersEl.innerHTML = `<h4>Users</h4><div class="user-list"></div>`;
+    const usersH4 = document.createElement('h4');
+    usersH4.textContent = 'Users';
+    this.userListEl = document.createElement('div');
+    this.userListEl.className = 'user-list';
+    this.usersEl.append(usersH4, this.userListEl);
     this.userListEl = this.usersEl.querySelector('.user-list');
 
     this.inputRow = document.createElement('div');

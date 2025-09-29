@@ -1,4 +1,6 @@
 import { api } from '../lib/adapter.js';
+import { el } from '../lib/dom.js';
+
 export class PrivmsgPane {
   constructor(net, peerNick, onClose) {
     this.net = net;
@@ -19,14 +21,21 @@ export class PrivmsgPane {
       border-bottom:1px solid var(--border); background: var(--tab-bg);
       font-weight:600;
     `;
-    title.innerHTML = `<span style="flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">DM · ${this.peer}</span>`;
+    const titleSpan = el('span', {
+      text: `DM · ${this.peer}`,
+    });
+    titleSpan.style.flex = '1';
+    titleSpan.style.overflow = 'hidden';
+    titleSpan.style.textOverflow = 'ellipsis';
+    titleSpan.style.whiteSpace = 'nowrap';
+  
     const closeBtn = document.createElement('button');
     closeBtn.textContent = '×';
     closeBtn.title = 'Close';
     closeBtn.className = 'pill';
     closeBtn.style.padding = '2px 8px';
     closeBtn.addEventListener('click', () => onClose?.());
-    title.appendChild(closeBtn);
+    title.append(titleSpan, closeBtn);
 
     // transcript
     this.trans = document.createElement('div');

@@ -139,38 +139,20 @@ function reconcileClientMessage(msg, net) {
       break;
     }
     case 'user': {
-      // Accept: {type:'user', user:{...}}  OR  {type:'user', ...topLevelFields}  OR  {type:'user', users:[...]]
-      const candidate =
-        msg.user ?? msg.payload ?? msg.data ?? msg; // fall back to root if needed
+      const u = msg.user ?? msg.payload ?? msg.data;
+      if (!u || typeof u !== 'object') break;
 
-      // Normalize to an array of user objects
-      const list = Array.isArray(candidate)
-        ? candidate
-        : (Array.isArray(msg.users) ? msg.users : [candidate]);
+      const key = (msg.key || u.nick || u.nickname || u.name || u.user || u.username || '').toString();
+      if (!key) break;
 
-      for (const raw of list) {
-        if (!raw || typeof raw !== 'object') continue;
+      const prev = net.userMap.get(key) || {};
+      const merged = { ...prev, ...u, nick: u.nick || prev.nick || key };
 
-        // Some backends echo "type"/"op" at the top level - strip obvious non-user metadata
-        const { type: _t, op: _op, ...u0 } = raw;
+      net.userMap.set(merged.nick, merged);
 
-        const key =
-          u0.nick || u0.nickname || u0.name || u0.user || u0.username;
-        if (!key) continue;
-
-        // Merge onto any existing record to preserve previously learned fields
-        const prev = net.userMap.get(key) || {};
-        const u = { ...prev, ...u0, nick: u0.nick || prev.nick || key };
-
-        net.userMap.set(u.nick, u);
-
-        // Broadcast locally via canonical topic
-        events.emit(EVT.DM_USER, /** @type {import('../lib/adapter.js').DMUser} */({
-          sessionId: net.sessionId,
-          user: u
-        }));
-        // And keep existing main-process path for multi-window DMs (back-compat)
-        try { api.dm.pushUser?.(net.sessionId, u); } catch {}
+      events.emit(EVT.DM_USER, { sessionId: net.sessionId, user: merged });
+      try { api.dm.pushUser?.(net.sessionId, merged); } catch (e) {
+        console.error('[ingest] api.dm.pushUser error:', e?.message || e);
       }
       break;
     }
