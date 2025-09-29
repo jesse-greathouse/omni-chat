@@ -36,21 +36,31 @@ export class ChannelListPane {
     this.loading = document.createElement('div');
     this.loading.className = 'chanlist-loading';
     this.loading.setAttribute('hidden', 'true');
-    this.loading.innerHTML = `<div class="spinner" role="status" aria-label="Loading"></div>`;
+    const spinner = document.createElement('div');
+    spinner.className = 'spinner';
+    spinner.setAttribute('role', 'status');
+    spinner.setAttribute('aria-label', 'Loading');
+    this.loading.appendChild(spinner);
     this.wrap.appendChild(this.loading);
 
     // table
     this.table = document.createElement('table');
     this.table.setAttribute('aria-label', 'Channel List');
-    this.table.innerHTML = `
-      <thead>
-        <tr>
-          <th class="num" style="width:12%;">Users</th>
-          <th style="width:28%;">Channel</th>
-          <th>Topic</th>
-        </tr>
-      </thead>
-      <tbody></tbody>`;
+    const thead = document.createElement('thead');
+    const tr = document.createElement('tr');
+    const thUsers = document.createElement('th');
+    thUsers.className = 'num';
+    thUsers.style.width = '12%';
+    thUsers.textContent = 'Users';
+    const thChan = document.createElement('th');
+    thChan.style.width = '28%';
+    thChan.textContent = 'Channel';
+    const thTopic = document.createElement('th');
+    thTopic.textContent = 'Topic';
+    tr.append(thUsers, thChan, thTopic);
+    thead.appendChild(tr);
+    this.tbody = document.createElement('tbody');
+    this.table.append(thead, this.tbody);
     this.tbody = this.table.querySelector('tbody');
     this.wrap.appendChild(this.table);
 

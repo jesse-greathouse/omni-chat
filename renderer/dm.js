@@ -22,6 +22,9 @@ try {
   if (state.peer) {
     document.title = String(state.peer);
     input.placeholder = `Message ${state.peer}`;
+    // proactively fetch profile snapshot when we *know* the peer
+    try { api.dm.requestUser?.(state.sessionId, state.peer); } catch {}
+    requestWhois();
   }
 } catch {}
 
@@ -58,22 +61,52 @@ function append(s){
 
 // Render the header grid from a user object (or show "not found")
 function renderProfile(u) {
-  profileEl.innerHTML = '';
+  // Clear safely without HTML parsing
+  if (profileEl.replaceChildren) profileEl.replaceChildren();
+  else profileEl.textContent = '';
+
   const v = normalizeUser(u);
+
   if (!v || !v.nick) {
     profileEl.classList.add('disabled');
     const empty = document.createElement('div');
     empty.className = 'empty';
-    empty.textContent = state.peer ? `Waiting for profile data for ${state.peer}…` : 'Waiting for DM…';
+    empty.textContent = state.peer
+      ? `Waiting for profile data for ${state.peer}…`
+      : 'Waiting for DM…';
     profileEl.appendChild(empty);
     return;
   }
+
   profileEl.classList.remove('disabled');
 
-  // Build rows using normalized fields
+  const extras = [];
+
+  // Only include raw real_name if normalized realname is missing/different
+  if ((u?.real_name ?? '') && String(u.real_name) !== String(v.realname ?? '')) {
+    extras.push(['Real name', u.real_name]);
+  }
+
+  // Only include raw ident if it's not what "User" already shows
+  if ((u?.ident ?? '') && String(u.ident) !== String(v.user ?? '')) {
+    extras.push(['Ident', u.ident]);
+  }
+
+  // helper to format channel_modes { "#chan": ["+o nick", "+v nick2"] }
+  const formatChannelModes = (cm) => {
+    if (!cm || typeof cm !== 'object') return '';
+    const parts = [];
+    for (const [chan, arr] of Object.entries(cm)) {
+      const val = Array.isArray(arr) ? arr.join(' ') : String(arr);
+      parts.push(`${chan}: ${val}`);
+    }
+    return parts.join(' | ');
+  };
+
+  // Build rows using normalized fields + raw extras if present
   const fields = [
     ['Nick',        v.nick],
-    ['User',        v.user],                      // WHOIS "user"/root "ident"
+    ['User',        v.user],
     ['Host',        v.host],
     ['Realname',    v.realname],
     ['Account',     v.account],
@@ -83,21 +116,32 @@ function renderProfile(u) {
     ['Away',        (v.away == null ? '' : (v.away ? (v.away_reason || 'away') : 'no'))],
     ['Idle',        (v.idle_secs == null ? '' : String(v.idle_secs) + 's')],
     ['Signon',      (v.signon_ts == null ? '' : String(v.signon_ts))],
-    ['Channels',    v.channels.length ? v.channels.join(' ') : ''],
-    ['Modes',       v.modes.length ? v.modes.join(' ') : ''],
+    ['Channels',    (Array.isArray(v.channels) && v.channels.length) ? v.channels.join(' ') : ''],
+    ['Modes',       (Array.isArray(v.modes)    && v.modes.length)    ? v.modes.join(' ')    : ''],
+    // Only include channel_modes once
+    ['Channel modes', formatChannelModes(u?.channel_modes ?? v?.channel_modes)],
+    // Append deduped extras
+    ...extras,
   ];
 
   for (const [k, val] of fields) {
     if (val == null || val === '') continue;
     const cell = document.createElement('div');
     cell.className = 'kv';
-    const ke = document.createElement('div'); ke.className = 'k'; ke.textContent = k;
-    const ve = document.createElement('div'); ve.className = 'v'; ve.textContent = String(val);
+
+    const ke = document.createElement('div');
+    ke.className = 'k';
+    ke.textContent = k;
+
+    const ve = document.createElement('div');
+    ve.className = 'v';
+    ve.textContent = String(val);
+
     cell.append(ke, ve);
     profileEl.appendChild(cell);
   }
 
-  // If nothing rendered, still show a disabled message so the panel isn't empty
+  // If nothing rendered, keep the panel from looking empty
   if (!profileEl.children.length) {
     profileEl.classList.add('disabled');
     const empty = document.createElement('div');
@@ -108,27 +152,38 @@ function renderProfile(u) {
 }
 
 // live updates: main will push user objects for our peer
-events.on(EVT.DM_USER, (payload) => {
-  if (!payload) return;
-  // Learn sessionId on first event, then filter thereafter
-  if (!state.sessionId && payload.sessionId) state.sessionId = payload.sessionId;
-  if (state.sessionId && payload.sessionId !== state.sessionId) return;
-  const u = payload.user || {};
-  const nickRaw = u.nick || u.nickname || u.name || u.user || u.username;
-  // If we still don't know who the peer is, adopt it from the first good payload.
-  if (!state.peer && nickRaw) {
+events.on(EVT.DM_USER, ({ sessionId, user } = {}) => {
+  if (!user) return;
+
+  // Learn sessionId once
+  if (!state.sessionId && sessionId) state.sessionId = sessionId;
+
+  // pick a nick from the blob
+  const nickRaw =
+    user.nick ?? user.nickname ?? user.name ?? user.user ?? user.username ?? '';
+
+  // adopt first non-self nick as the DM peer
+  const selfNick = api?.dm?.current?.selfNick ?? '';
+  if (!state.peer && nickRaw && nickRaw !== selfNick && !user.self && !user.is_self) {
     state.peer = nickRaw;
     document.title = String(state.peer);
     input.placeholder = `Message ${state.peer}`;
+    api.dm.requestUser?.(state.sessionId, state.peer);
     requestWhois();
   }
-  const nick = (nickRaw || '').toLowerCase();
-  const want = String(state.peer || '').toLowerCase();
-  if (nick && want && nick === want) {
-    // Ask for WHOIS if this snapshot lacks it; backend will throttle/cache safely
-    if (!u.whois) requestWhois();
-    renderProfile(u);
-  }
+
+  // if we still don't have a peer, nothing to do yet
+  if (!state.peer) return;
+
+  // update header only for our current peer (case-insensitive)
+  const samePeer =
+    nickRaw &&
+    nickRaw.localeCompare(String(state.peer), undefined, { sensitivity: 'accent' }) === 0;
+
+  if (!samePeer) return;
+
+  if (!user.whois) requestWhois();
+  renderProfile(user);
 });
 
 function sendNow() {

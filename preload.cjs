@@ -48,6 +48,9 @@ const dual = (legacyTopic, canonicalTopic, payload) => {
 // Still support multiplex 'evt' from main
 ipcRenderer.on('evt', (_e, { topic, payload }) => { if (topic) bus.emit(topic, payload); });
 
+// Track the current DM window's session + peer so renderer can read api.dm.current
+let currentDM = { sessionId: null, peer: null, selfNick: null };
+
 /**
  * Session bridges
  * Maintain legacy 'sessions:*' while emitting canon 'conn:*'
@@ -77,6 +80,9 @@ ipcRenderer.on('dm:init', (_e, p) => {
   bus.emit('dm:init', p);
 
   const { sessionId, peer, bootLines } = p || {};
+  // Remember current DM identity for renderer access (dm.js reads api.dm.current)
+  currentDM.sessionId = sessionId || null;
+  currentDM.peer      = peer || null;
   if (peer) {
     // Minimal user object so DM header can render immediately
     bus.emit(EVT.DM_USER, { sessionId, user: { nick: peer } });
@@ -149,7 +155,10 @@ const api = {
     open:        (sessionId, peer, bootLine) => ipcRenderer.invoke('dm:open', { sessionId, peer, bootLine }),
     notify:      (sessionId, peer)           => ipcRenderer.send('dm:notify', { sessionId, peer }),
     requestUser: (sessionId, nick)           => ipcRenderer.send('dm:request-user', { sessionId, nick }),
-    pushUser:    () => {}, // main -> renderer only
+    // Called from the *main renderer* (ingest) to broadcast to the correct DM window(s)
+    pushUser:    (sessionId, user)           => ipcRenderer.send('dm:push-user', { sessionId, user }),
+    // Read-only snapshot so dm.js can discover session/peer right away
+    get current() { return { ...currentDM }; },// main -> renderer only
   },
 
   settings: {

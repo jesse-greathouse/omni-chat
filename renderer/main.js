@@ -3,6 +3,7 @@ import { setupIngest } from './irc/ingest.js';
 import { ErrorDock } from './ui/ErrorDock.js';
 import { createProfilesPanel } from './ui/connectionForm.js';
 import { api, events, EVT } from './lib/adapter.js';
+import { el } from './lib/dom.js';
 
 uiRefs.viewsEl      = document.getElementById('views');
 uiRefs.errorDockEl  = document.getElementById('errorDock');
@@ -17,25 +18,23 @@ let activeSessionId = null;
 const tabs = new Map(); // id -> { id, title, layerEl, netId? }
 
 function renderTabs() {
-  tabbarEl.innerHTML = '';
+  tabbarEl.textContent = '';
   for (const { id, title } of tabs.values()) {
-    const el = document.createElement('div');
-    el.className = 'tab' + (id === activeSessionId ? ' active' : '');
-    el.innerHTML = `<span class="title">${title}</span><span class="close" title="Close">x</span>`;
-    el.addEventListener('click', (ev) => {
-      if (ev.target.closest('.close')) {
+    const tab = el('div', { className: 'tab' + (id === activeSessionId ? ' active' : '') });
+    const titleSpan = el('span', { className: 'title', text: String(title ?? '') });
+    const closeSpan = el('span', { className: 'close', title: 'Close', text: 'x' });
+    tab.append(titleSpan, closeSpan);
+    tab.addEventListener('click', (ev) => {
+      if (ev.target === closeSpan) {
         closeTab(id);
         ev.stopPropagation();
         return;
       }
       activateTab(id);
     });
-    tabbarEl.appendChild(el);
+    tabbarEl.appendChild(tab);
   }
-  const plus = document.createElement('button');
-  plus.id = 'newTabBtn';
-  plus.textContent = '+';
-  plus.title = 'Open new connection tab';
+  const plus = el('button', { id: 'newTabBtn', title: 'Open new connection tab', text: '+' });
   plus.addEventListener('click', openNewTab);
   tabbarEl.appendChild(plus);
 }

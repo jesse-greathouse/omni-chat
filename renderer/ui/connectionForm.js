@@ -1,4 +1,5 @@
 import { api } from '../lib/adapter.js';
+import { el } from '../lib/dom.js';
 
 export function createProfilesPanel({ onConnect }) {
   const wrap = document.createElement('div');
@@ -72,15 +73,23 @@ export function createProfilesPanel({ onConnect }) {
       return `auth=${t}`;
     })();
 
-    left.innerHTML = `
-      <div style="font-weight:600;">${host}</div>
-      <div style="color:var(--muted);font-size:12px;">
-        ${p.tls !== false ? 'TLS' : 'TCP'} • ${p.port ?? 6697}
-        ${p.nick ? ` • nick=${escapeHtml(p.nick)}` : ''}
-        ${p.realname ? ` • realname=${escapeHtml(p.realname)}` : ''}
-        · ${authLabel}
-      </div>
-    `;
+    // Build label safely with text nodes
+    const top = document.createElement('div');
+    top.style.fontWeight = '600';
+    top.textContent = String(host ?? '');
+    const sub = document.createElement('div');
+    sub.style.color = 'var(--muted)';
+    sub.style.fontSize = '12px';
+    const parts = [
+      (p.tls !== false ? 'TLS' : 'TCP'),
+      String(p.port ?? 6697),
+      (p.nick ? `nick=${p.nick}` : null),
+      (p.realname ? `realname=${p.realname}` : null),
+      authLabel,
+    ].filter(Boolean);
+    sub.textContent = parts.join(' · ');
+    left.append(top, sub);
+
     const connectBtn = button('Connect', () => doConnect(host));
     const editBtn    = button('Edit',    () => openEditor(host));
     const delBtn     = button('Delete',  async () => {
@@ -99,9 +108,6 @@ export function createProfilesPanel({ onConnect }) {
     b.textContent = text;
     b.addEventListener('click', onClick);
     return b;
-  }
-  function escapeHtml(s) {
-    return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   }
 
   async function hydrate() {
