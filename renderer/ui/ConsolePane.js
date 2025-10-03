@@ -1,59 +1,33 @@
+import { Pane } from './base/Pane.js';
+import { Composer } from './widgets/Composer.js';
+import { TranscriptView } from './widgets/TranscriptView.js';
 import { api } from '../lib/adapter.js';
-import { TranscriptBuffer } from './TranscriptBuffer.js';
 
-export class ConsolePane {
+export class ConsolePane extends Pane {
   constructor(net) {
+    super({ id: `console:${net.id}` });
     this.net = net;
-    this.name = 'Console';
 
-    this.root = document.createElement('div');
-    this.root.className = 'console-pane';
-
-    this.transcriptEl = document.createElement('div');
-    this.transcriptEl.className = 'transcript';
-    this.buffer = new TranscriptBuffer(this.transcriptEl, {
-      maxLines: 2000,
-      pruneChunk: 240,
-      scrollEl: this.transcriptEl,
-      snapThreshold: 56
+    // Structure: [Transcript] + [Composer]
+    this.view = new TranscriptView({ withTopic: false });
+    this.composer = new Composer({
+      placeholder: 'Type a command or message…',
+      onSubmit: (text) => {
+        // Console sends verbatim to the backend
+        try { api.sessions.send(this.net.sessionId, text); } catch {}
+        this.appendLine(`> ${text}`);
+      }
     });
 
-    this.inputRow = document.createElement('div');
-    this.inputRow.className = 'input-row';
-    this.sendBtn = document.createElement('button');
-    this.sendBtn.className = 'send-btn';
-    this.sendBtn.textContent = 'Send';
-    this.msgInput = document.createElement('input');
-    this.msgInput.className = 'msg-input';
-    this.msgInput.placeholder = `Type IRC commands or messages (e.g., /join #foo)`;
-
-    this.inputRow.appendChild(this.sendBtn);
-    this.inputRow.appendChild(this.msgInput);
-
-    this.root.appendChild(this.transcriptEl);
-    this.root.appendChild(this.inputRow);
-
-    this.sendBtn.addEventListener('click', () => this.sendCurrent());
-    this.msgInput.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') this.sendCurrent(); });
+    this.root.className = 'console-pane';
+    this.root.append(this.view.element, this.composer.el);
   }
 
-  mount(container) { container.appendChild(this.root); }
-  show() { this.root.classList.remove('hidden'); this.buffer.onShow(); }
-  hide() { this.root.classList.add('hidden'); }
+  appendLine(s) { this.view.appendLine(s); }
+  setTopic(_t){}          // noop: console has no topic
+  setUsers(_arr){}        // noop: console has no users
 
-  appendLine(text) {
-    this.buffer.append(text);
-  }
-
-  clear() { this.buffer.clear(); }
-
-  sendCurrent() {
-    const text = this.msgInput.value.trim();
-    if (!text) return;
-    if (this.net?.sessionId) {
-      api.sessions.send(this.net.sessionId, text);
-      this.appendLine(`> ${text}`);
-      this.msgInput.value = '';
-    }
+  layout() {
+    // nothing special; CSS handles it
   }
 }
