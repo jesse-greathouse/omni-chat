@@ -4,6 +4,18 @@ import { ConsolePane } from '../ui/ConsolePane.js';
 import { ChannelListPane } from '../ui/ChannelListPane.js';
 import { PrivmsgPane } from '../ui/PrivmsgPane.js';
 
+export const A = Object.freeze({
+  NET_UPSERT: 'NET_UPSERT',
+  NET_ACTIVATE: 'NET_ACTIVATE',
+  CHANLIST_SNAPSHOT: 'CHANLIST_SNAPSHOT',
+  CHANNEL_UPDATE: 'CHANNEL_UPDATE',
+  ROSTER_SET: 'ROSTER_SET',
+  DM_LINE: 'DM_LINE',
+  DM_USER: 'DM_USER',
+  SELF_NICK: 'SELF_NICK',
+  NICK_CHANGE: 'NICK_CHANGE'
+});
+
 export const uiRefs = {
   statusEl: null,
   viewsEl: null,
@@ -14,9 +26,99 @@ export const uiRefs = {
 export const store = {
   networks: new Map(), // netId -> { id, sessionId, viewEl, chanListEl, chanHost, channels:Map, activeChan, console, chanListTab, chanMap, userMap, chanListTable }
   activeNetId: null,
+};
 
-  // set by setupIngest
-  ingest: (_line, _sessionId) => {},
+export function dispatch(action) {
+  if (!action || !action.type) return;
+  switch (action.type) {
+    case A.NET_UPSERT: {
+      // ensures a network (wraps ensureNetwork)
+      const { opts, sessionId, mountEl } = action;
+      ensureNetwork(opts, sessionId, mountEl);
+      break;
+    }
+    case A.NET_ACTIVATE: {
+      activateNetwork(action.netId);
+      break;
+    }
+    case A.CHANLIST_SNAPSHOT: {
+      const n = getNetworkBySessionId(action.sessionId);
+      if (!n) break;
+      n.chanListTable.clear();
+      for (const it of action.items) n.chanListTable.set(it.name, it);
+      // UI panes will read from chanListTable as before
+      break;
+    }
+    case A.CHANNEL_UPDATE: {
+      const n = getNetworkBySessionId(action.sessionId);
+      if (!n) break;
+      const { name, topic, users } = action.channel;
+      const ch = ensureChannel(n, name);
+      if (topic !== undefined) ch.pane.setTopic(topic);
+      if (Array.isArray(users)) ch.pane.setUsers(users);
+      // mirror into n.chanMap for consistency
+      const prev = n.chanMap.get(name) || { topic: null, users: new Set() };
+      if (topic !== undefined) prev.topic = topic;
+      if (Array.isArray(users)) prev.users = new Set(users);
+      n.chanMap.set(name, prev);
+      break;
+    }
+    case A.ROSTER_SET: {
+      const n = getNetworkBySessionId(action.sessionId);
+      if (!n) break;
+      // authoritative userMap
+      n.userMap.clear();
+      for (const u of action.users) {
+        const nick = u.nick || u.nickname || u.user || u.username;
+        if (nick) n.userMap.set(nick, u);
+      }
+      break;
+    }
+    case A.DM_LINE: {
+      const n = getNetworkBySessionId(action.sessionId);
+      if (!n) break;
+      const dm = ensureDMWindow(n, action.peer);
+      dm.pane.appendLine(`${action.from}${action.kind === 'NOTICE' ? ' (NOTICE)' : ''}: ${action.text}`);
+      break;
+    }
+    case A.DM_USER: {
+      const n = getNetworkBySessionId(action.sessionId);
+      if (!n) break;
+      // cache latest, render if DM window open; main.js already also caches for dm windows
+      n.userMap.set(action.user.nick ?? action.user.user ?? action.user.username, action.user);
+      break;
+    }
+    case A.SELF_NICK: {
+      const n = getNetworkBySessionId(action.sessionId);
+      if (n) n.selfNick = action.nick;
+      break;
+    }
+    case A.NICK_CHANGE: {
+      const n = getNetworkBySessionId(action.sessionId);
+      if (!n) break;
+      const u = n.userMap.get(action.old_nick);
+      if (u) {
+        n.userMap.delete(action.old_nick);
+        n.userMap.set(action.new_nick, { ...u, nick: action.new_nick });
+      }
+      if (n.selfNick === action.old_nick) n.selfNick = action.new_nick;
+      break;
+    }
+  }
+}
+
+// Lightweight action creators (call-site sugar)
+export const reducers = {
+  applyChannelUpdate: (sessionId, channel) =>
+    dispatch({ type: A.CHANNEL_UPDATE, sessionId, channel }),
+  applyChanlistSnapshot: (sessionId, items) =>
+    dispatch({ type: A.CHANLIST_SNAPSHOT, sessionId, items }),
+  applyRoster: (sessionId, users) =>
+    dispatch({ type: A.ROSTER_SET, sessionId, users }),
+  applyDMLine: (sessionId, payload) =>
+    dispatch({ type: A.DM_LINE, sessionId, ...payload }),
+  applyDMUser: (sessionId, user) =>
+    dispatch({ type: A.DM_USER, sessionId, user }),
 };
 
 export function networkId(opts, sessionId) {

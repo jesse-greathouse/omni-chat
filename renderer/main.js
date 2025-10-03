@@ -1,5 +1,5 @@
-import { store, ensureNetwork, activateNetwork, uiRefs } from './state/store.js';
-import { setupIngest } from './irc/ingest.js';
+import { ensureNetwork, activateNetwork, uiRefs } from './state/store.js';
+import { Ingestor } from './irc/ingest.js';
 import { ErrorDock } from './ui/ErrorDock.js';
 import { createProfilesPanel } from './ui/connectionForm.js';
 import { api, events, EVT } from './lib/adapter.js';
@@ -15,6 +15,7 @@ window.addEventListener('error',  e => errors.append(`[renderer] ${e.message}`))
 window.addEventListener('unhandledrejection', e => errors.append(`[promise] ${e.reason?.message || e.reason}`));
 
 let activeSessionId = null;
+const ingestor = new Ingestor({ onError: (s) => errors.append(s) });
 const tabs = new Map(); // id -> { id, title, layerEl, netId? }
 
 function renderTabs() {
@@ -120,9 +121,6 @@ function mountProfilesPanel(layerEl) {
   layerEl.appendChild(panel);
 }
 
-// ingest wiring
-setupIngest({ onError: (s) => errors.append(s) });
-
 events.on(EVT.CONN_STATUS, ({ sessionId, status }) => {
   // optional: UI header, etc.
 });
@@ -132,9 +130,9 @@ events.on(EVT.CONN_ERROR, ({ sessionId, message }) => {
   if (tabs.has(sessionId)) errors.append(`[${sessionId}] ${message}`);
 });
 
-// Canonical bus: raw line stream
+// Canonical bus: raw line stream → Ingestor
 events.on(EVT.CONN_LINE, ({ sessionId, line }) => {
-  try { store.ingest(line, sessionId); } catch {}
+  try { ingestor.ingest(line, sessionId); } catch {}
 });
 
 

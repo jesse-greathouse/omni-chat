@@ -1,196 +1,170 @@
-import { store, ensureChannel, appendToConsole, getNetworkBySessionId } from '../state/store.js';
+import { reducers, dispatch, A, ensureChannel, appendToConsole, getNetworkBySessionId } from '../state/store.js';
 import { api, events, EVT } from '../lib/adapter.js';
 import { classify, normalizeChanlistItems, isNickServ } from '../protocol/index.js';
 
-export function setupIngest({ onError }) {
-  // IMPORTANT: now ingests **per session**
-  store.ingest = (line, sessionId) => {
+const K = Object.freeze({
+  TYPE: {
+    CHANNELS:    'channels',
+    CHANNEL:     'channel',
+    CHANLIST:    'chanlist',
+    USER:        'user',
+    CLIENT_USER: 'client_user',
+    NICK_CHANGE: 'nick_change',
+  },
+  OP: {
+    SNAPSHOT: 'snapshot',
+    UPSERT:   'upsert',
+    REMOVE:   'remove',
+  },
+  NUM: {
+    LIST_START: 321,
+    LIST_ITEM:  322,
+    LIST_END:   323,
+  },
+});
+
+function autoIdentifyIfNeeded(net) {
+  if (net.authType !== 'nickserv' || !net.authPassword || net._nickservTried) return;
+  net._nickservTried = true;
+  const acct = (net.authUsername && String(net.authUsername).trim()) || null;
+  const cmd  = acct
+    ? `/msg NickServ IDENTIFY ${acct} ${net.authPassword}`
+    : `/msg NickServ IDENTIFY ${net.authPassword}`;
+  try { api.sessions.send(net.sessionId, cmd); } catch {}
+}
+
+function publishChanlistSnapshot(net) {
+  events.emit(EVT.CHAN_SNAPSHOT, {
+    sessionId: net.sessionId,
+    items: Array.from(net.chanListTable.values()),
+  });
+}
+
+function upsertChannelStore(net, chObj) {
+  const name  = chObj.name || chObj.key || chObj.channel;
+  if (!name) return;
+
+  const topic = (typeof chObj.topic === 'string' || chObj.topic === null) ? chObj.topic : undefined;
+  const users = Array.isArray(chObj.users) ? chObj.users : undefined;
+  reducers.applyChannelUpdate(net.sessionId, { name, topic, users });
+
+  // keep chanlist table in sync; accept either count or array
+  const usersN = Number(chObj.users?.length || chObj.users || 0) || 0;
+  net.chanListTable.set(name, { name, users: usersN, topic: topic || '' });
+}
+
+export class Ingestor {
+  constructor({ onError } = {}) { this.onError = onError; }
+
+  ingest(line, sessionId) {
     try {
       const net = getNetworkBySessionId(sessionId);
-      if (!net) return; // session’s network not mounted yet
+      if (!net) return;
 
-      // CLIENT JSON
       if (line.startsWith('CLIENT ')) {
-        const jsonStr = line.slice(7).trim();
-        reconcileClientMessage(JSON.parse(jsonStr), net);
+        this.#reconcile(JSON.parse(line.slice(7).trim()), net);
         return;
       }
-
-      // Raw JSON (some backends emit this)
       if (line.startsWith('{') || line.startsWith('[')) {
-        try { reconcileClientMessage(JSON.parse(line), net); return; } catch {}
+        try { this.#reconcile(JSON.parse(line), net); return; } catch {}
       }
 
-      // IRC raws → classify once, route by type
       const c = classify(line, net.selfNick);
-
-      // LIST numerics (suppress to keep UI snappy)
-      if (c.type === 'other' && (c.numeric === 321 || c.numeric === 322 || c.numeric === 323)) return;
+      if (c.type === 'other' && (c.numeric === K.NUM.LIST_START || c.numeric === K.NUM.LIST_ITEM || c.numeric === K.NUM.LIST_END)) return;
 
       if (c.type === 'chan') {
-        const chan = ensureChannel(net, c.target);
-        const marker = ' • ';
-        chan.pane.appendLine(`${c.from}${c.kind === 'NOTICE' ? marker : ''}: ${c.text}`);
+        reducers.applyChannelUpdate(net.sessionId, { name: c.target });
+        const ch = ensureChannel(net, c.target);
+        ch.pane.appendLine(`${c.from}${c.kind === 'NOTICE' ? ' \u2022 ' : ''}: ${c.text}`);
         return;
       }
 
       if (c.type === 'dm') {
-        if (isNickServ(c.from)) {
-          // Auto-identify (NickServ) and swallow messages.
-          const wants = (net.authType === 'nickserv');
-          if (wants && net.authPassword && !net._nickservTried) {
-            net._nickservTried = true;
-            try {
-              const acct = (net.authUsername && String(net.authUsername).trim()) || null;
-              const cmd = acct
-                ? `/msg NickServ IDENTIFY ${acct} ${net.authPassword}`
-                : `/msg NickServ IDENTIFY ${net.authPassword}`;
-              api.sessions.send(net.sessionId, cmd);
-            } catch {}
-          }
-          return;
-        }
-        // Open DM window as usual, then notify it (attention/nudge)
+        if (isNickServ(c.from)) { autoIdentifyIfNeeded(net); return; } // FIX: no duplication
         api.dm.open(net.sessionId, c.from, { from: c.from, kind: c.kind, text: c.text }).catch(()=>{});
         return;
       }
 
-      // everything else → this network’s console
       appendToConsole(net, line);
-
     } catch (e) {
-      onError?.(`[ingest] ${e.message || e}`);
+      this.onError?.(`[ingest] ${e.message || e}`);
     }
-  };
-}
+  }
 
-// helpers
+  #reconcile(msg, net) {
+    const type = String(msg?.type || '').toLowerCase();
 
-function publishChanlistSnapshot(net) {
-  const items = Array.from(net.chanListTable.values())
-    .map(({ name, users, topic }) => ({ name, users: Number(users) || 0, topic: topic || '' }));
-  events.emit(EVT.CHAN_SNAPSHOT, /** @type {import('../lib/adapter.js').ChanSnapshot} */({
-    sessionId: net.sessionId,
-    items
-  }));
-}
-
-function reconcileClientMessage(msg, net) {
-  const type = String(msg?.type || '').toLowerCase();
-
-  const applyChannelBlob = (chObj) => {
-    const name = chObj.name || chObj.key || chObj.channel;
-    if (!name) return;
-    const prev = net.chanMap.get(name) || { topic: null, users: new Set() };
-    if (Array.isArray(chObj.users)) prev.users = new Set(chObj.users);
-    if (typeof chObj.topic === 'string' || chObj.topic === null) prev.topic = chObj.topic;
-    net.chanMap.set(name, prev);
-
-    const chan = ensureChannel(net, name);
-    chan.pane.setTopic(prev.topic);
-    chan.pane.setUsers(Array.from(prev.users));
-    publishChanlistSnapshot(net);
-  };
-
-  switch (type) {
-    case 'channels': {
-      const op = msg.op || 'upsert';
-      if (op === 'snapshot' || op === 'upsert') {
-        const assoc = msg.channels || {};
-        const arr = Array.isArray(assoc) ? assoc : Object.values(assoc);
-        for (const ch of arr) applyChannelBlob(ch);
-        publishChanlistSnapshot(net);
-      } else if (op === 'remove' && Array.isArray(msg.names)) {
-        for (const n of msg.names) {
-          net.chanMap.delete(n);
-          const ch = net.channels.get(n);
-          if (ch) {
-            ch.itemEl.remove();
-            ch.pane.root.remove();
-            net.channels.delete(n);
+    switch (type) {
+      // FIX: no inline helper; use upsertChannelStore + publish once
+      case K.TYPE.CHANNELS: {
+        const op = msg.op || K.OP.UPSERT;
+        if (op === K.OP.SNAPSHOT || op === K.OP.UPSERT) {
+          const assoc = msg.channels || {};
+          const arr = Array.isArray(assoc) ? assoc : Object.values(assoc);
+          for (const ch of arr) upsertChannelStore(net, ch);
+          publishChanlistSnapshot(net); // FIX: single emission
+        } else if (op === K.OP.REMOVE && Array.isArray(msg.names)) {
+          for (const n of msg.names) {
+            net.chanMap.delete(n);
+            net.chanListTable.delete(n);
+            const ch = net.channels.get(n);
+            if (ch) { ch.itemEl.remove(); ch.pane.root.remove(); net.channels.delete(n); }
           }
+          publishChanlistSnapshot(net); // FIX: single emission
         }
-        publishChanlistSnapshot(net);
+        break;
       }
-      break;
-    }
-    case 'channel': {
-      const ch = msg.channel || msg.payload || msg.data;
-      if (ch) applyChannelBlob(ch);
-      publishChanlistSnapshot(net);
-      break;
-    }
-    case 'chanlist': {
-      const src = msg?.payload || msg?.data || msg?.chanlist || msg || {};
-      const op = String(src?.op || 'snapshot').toLowerCase();
-      if (op === 'snapshot') {
+
+      case K.TYPE.CHANNEL: {
+        const ch = msg.channel || msg.payload || msg.data;
+        if (ch) {
+          upsertChannelStore(net, ch);
+          publishChanlistSnapshot(net); // FIX: single emission
+        }
+        break;
+      }
+
+      case K.TYPE.CHANLIST: {
+        const items = normalizeChanlistItems(msg);
+        reducers.applyChanlistSnapshot(net.sessionId, items);
         net.chanListTable.clear();
+        for (const it of items) net.chanListTable.set(it.name, it);
+        publishChanlistSnapshot(net); // FIX: single emission
+        break;
       }
-      for (const it of normalizeChanlistItems(msg)) {
-        net.chanListTable.set(it.name, it);
+
+      case K.TYPE.USER: {
+        const u = msg.user ?? msg.payload ?? msg.data;
+        if (!u || typeof u !== 'object') break;
+        events.emit(EVT.DM_USER, { sessionId: net.sessionId, user: u });
+        try { api.dm.pushUser?.(net.sessionId, u); } catch {}
+        reducers.applyDMUser(net.sessionId, u);
+        break;
       }
-      const removals = Array.isArray(src.remove) ? src.remove
-                    : (op === 'remove' && Array.isArray(src.names) ? src.names : []);
-      for (const n of removals) {
-        const key = typeof n === 'string' ? n : (n?.name || n?.channel || n?.key);
-        if (key) net.chanListTable.delete(key);
-      }
-      publishChanlistSnapshot(net);
-      break;
-    }
-    case 'user': {
-      const u = msg.user ?? msg.payload ?? msg.data;
-      if (!u || typeof u !== 'object') break;
 
-      const key = (msg.key || u.nick || u.nickname || u.name || u.user || u.username || '').toString();
-      if (!key) break;
-
-      const prev = net.userMap.get(key) || {};
-      const merged = { ...prev, ...u, nick: u.nick || prev.nick || key };
-
-      net.userMap.set(merged.nick, merged);
-
-      events.emit(EVT.DM_USER, { sessionId: net.sessionId, user: merged });
-      try { api.dm.pushUser?.(net.sessionId, merged); } catch (e) {
-        console.error('[ingest] api.dm.pushUser error:', e?.message || e);
-      }
-      break;
-    }
-    case 'client_user': {
-      if (msg.user && msg.user.nick) {
-        net.userMap.set(msg.user.nick, msg.user);
-        net.selfNick = msg.user.nick;
-        events.emit(EVT.DM_USER, { sessionId: net.sessionId, user: msg.user });
-        try { api.dm.pushUser?.(net.sessionId, msg.user); } catch {}
-
-        // opportunistic auto-identify on connect
-        if (net.authType === 'nickserv' && net.authPassword && !net._nickservTried) {
-          net._nickservTried = true;
-          const acct = (net.authUsername && String(net.authUsername).trim()) || null;
-          const cmd = acct
-            ? `/msg NickServ IDENTIFY ${acct} ${net.authPassword}`
-            : `/msg NickServ IDENTIFY ${net.authPassword}`;
-          try { api.sessions.send(net.sessionId, cmd); } catch {}
+      case K.TYPE.CLIENT_USER: {
+        if (msg.user && msg.user.nick) {
+          reducers.applyDMUser(net.sessionId, msg.user);
+          dispatch({ type: A.SELF_NICK, sessionId: net.sessionId, nick: msg.user.nick });
+          events.emit(EVT.DM_USER, { sessionId: net.sessionId, user: msg.user });
+          try { api.dm.pushUser?.(net.sessionId, msg.user); } catch {}
+          autoIdentifyIfNeeded(net); // FIX: no duplication
         }
+        break;
       }
-      break;
-    }
-    case 'nick_change': {
-      const { old_nick, new_nick } = msg;
-      if (old_nick && new_nick) {
-        const u = net.userMap.get(old_nick);
-        if (u) {
-          const nu = { ...u, nick: new_nick };
-          net.userMap.delete(old_nick);
-          net.userMap.set(new_nick, nu);
-          try { api.dm.pushUser?.(net.sessionId, nu); } catch {}
+
+      case K.TYPE.NICK_CHANGE: {
+        const { old_nick, new_nick } = msg;
+        if (old_nick && new_nick) {
+          dispatch({ type: A.NICK_CHANGE, sessionId: net.sessionId, old_nick, new_nick });
+          try { api.dm.pushUser?.(net.sessionId, { nick: new_nick }); } catch {}
         }
-        if (net.selfNick && old_nick === net.selfNick) net.selfNick = new_nick;
+        break;
       }
-      break;
-    }
-    default: {
-      if (msg?.type) appendToConsole(net, `CLIENT(${msg.type}) ${JSON.stringify(msg).slice(0, 400)}…`);
+
+      default: {
+        appendToConsole(net, `CLIENT(${msg?.type || 'unknown'}) ${JSON.stringify(msg).slice(0, 400)}…`);
+      }
     }
   }
 }
