@@ -11,7 +11,7 @@ export class ConsolePane extends Pane {
     // Structure: [Transcript] + [Composer]
     this.view = new TranscriptView({ withTopic: false });
     this.composer = new Composer({
-      placeholder: 'Type a command or message…',
+      placeholder: 'Type a command or message...',
       onSubmit: (text) => {
         // Console sends verbatim to the backend
         try { api.sessions.send(this.net.sessionId, text); } catch {}
@@ -19,7 +19,7 @@ export class ConsolePane extends Pane {
       }
     });
 
-    this.root.className = 'console-pane';
+    this.root.className = 'console-pane pane--with-composer';
     this.root.append(this.view.element, this.composer.el);
   }
 

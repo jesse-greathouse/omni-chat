@@ -120,7 +120,7 @@ function createDMWindow(sessionId, peer, bootLine ) {
 
   const w = new BrowserWindow({
     width: 640,
-    height: 480,
+    height: 450,
     minWidth: 420,
     minHeight: 320,
     title: String(peer), // native title = peer

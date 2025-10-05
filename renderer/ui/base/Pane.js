@@ -3,7 +3,7 @@ export class Pane {
   constructor(opts = {}) {
     this.id = opts.id || null;
     this.root = document.createElement('div');
-    this.root.style.minHeight = '0';
+    this.root.classList.add('pane-root', 'min-h-0');
     this._mounted = false;
     this._visible = false;
   }

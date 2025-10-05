@@ -11,9 +11,10 @@ export class ChannelPane extends Pane {
     this.name = name;
 
     // Grid: [Transcript | Users]
-    this.root.className = 'chan-pane';
+    this.root.className = 'chan-pane pane--with-composer';
 
     this.view = new TranscriptView({ withTopic: true });
+    this.view.element.classList.add('transcript--with-divider');
     this.usersEl = el('div', { className: 'users' });
     this.usersTitleEl = el('h4', { text: 'Users' });
     this.usersListEl = el('div');

@@ -1,16 +1,15 @@
 import { api } from '../lib/adapter.js';
-import { el } from '../lib/dom.js';
 
 export function createProfilesPanel({ onConnect }) {
   const wrap = document.createElement('div');
   wrap.className = 'conn-wrap';
   wrap.innerHTML = `
-    <div class="conn-card">
+    <div class="conn-card panel">
       <h3>Omni-Chat - Connections</h3>
 
       <div class="conn-grid">
-        <section style="border:1px solid var(--border);border-radius:8px;padding:12px;">
-          <h4 style="margin:0 0 8px 0;">Global Defaults</h4>
+        <section class="card">
+          <h4 class="h4-tight">Global Defaults</h4>
           <div class="form-row">
             <label>Authentication</label>
             <select id="gAuth">
@@ -20,27 +19,27 @@ export function createProfilesPanel({ onConnect }) {
             </select>
           </div>
           <div class="form-row"><label>Nick</label><input id="gNick" type="text"/></div>
-          <div class="form-row auth-extra" id="gAuthUserRow" style="display:none;">
+          <div class="form-row auth-extra hidden" id="gAuthUserRow">
             <label>Username</label><input id="gAuthUser" type="text" />
           </div>
-          <div class="form-row auth-extra" id="gAuthPassRow" style="display:none;">
+          <div class="form-row auth-extra hidden" id="gAuthPassRow">
             <label>Password</label><input id="gAuthPass" type="password" />
           </div>
           <div class="form-row"><label>Realname</label><input id="gReal" type="text"/></div>
           <div class="row-actions">
             <button class="btn" id="saveGlobals">Save Defaults</button>
           </div>
-          <div style="color:var(--muted);font-size:12px;margin-top:6px;">
+          <div class="muted fs-12 mt-6">
             Server profiles inherit these when their Nick/Realname are empty or null.
           </div>
         </section>
 
-        <section class="server-profiles" style="border:1px solid var(--border);border-radius:8px;padding:12px;">
-          <div style="display:flex;align-items:center;justify-content:space-between;">
-            <h4 style="margin:0;">Server Profiles</h4>
+        <section class="server-profiles card">
+          <div class="row between">
+            <h4 class="h4-tight">Server Profiles</h4>
             <button class="btn" id="addServer">Add Server</button>
           </div>
-          <div id="profilesList" class="profiles-list" style="margin-top:8px;"></div>
+          <div id="profilesList" class="profiles-list mt-8"></div>
         </section>
       </div>
     </div>
@@ -59,10 +58,11 @@ export function createProfilesPanel({ onConnect }) {
 
   function serverRow(host, p) {
     const row = document.createElement('div');
-    row.style.cssText = 'border:1px solid var(--border);border-radius:8px;padding:8px;margin:6px 0;display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center;';
+    row.className = 'card g-cols-1-auto mt-6';
+
     const left = document.createElement('div');
     const right = document.createElement('div');
-    right.style.display = 'flex'; right.style.gap = '8px';
+    right.className = 'row';
 
     const authLabel = (() => {
       const t = (p.authType || '').toLowerCase();
@@ -75,11 +75,11 @@ export function createProfilesPanel({ onConnect }) {
 
     // Build label safely with text nodes
     const top = document.createElement('div');
-    top.style.fontWeight = '600';
+    top.className = 'fw-600';
     top.textContent = String(host ?? '');
+
     const sub = document.createElement('div');
-    sub.style.color = 'var(--muted)';
-    sub.style.fontSize = '12px';
+    sub.className = 'muted fs-12';
     const parts = [
       (p.tls !== false ? 'TLS' : 'TCP'),
       String(p.port ?? 6697),
@@ -87,7 +87,7 @@ export function createProfilesPanel({ onConnect }) {
       (p.realname ? `realname=${p.realname}` : null),
       authLabel,
     ].filter(Boolean);
-    sub.textContent = parts.join(' · ');
+    sub.textContent = parts.join(' | ');
     left.append(top, sub);
 
     const connectBtn = button('Connect', () => doConnect(host));
@@ -126,15 +126,15 @@ export function createProfilesPanel({ onConnect }) {
     // Show Username only for SASL; show Password for SASL or NickServ
     const isSasl = gAuth.value === 'sasl';
     const isNickServ = gAuth.value === 'nickserv';
-    gAuthUserRow.style.display = isSasl ? '' : 'none';
-    gAuthPassRow.style.display = (isSasl || isNickServ) ? '' : 'none';
+    gAuthUserRow.classList.toggle('hidden', !isSasl);
+    gAuthPassRow.classList.toggle('hidden', !(isSasl || isNickServ));
 
     listEl.innerHTML = '';
     const profs = await api.profiles.list();
     const hosts = Object.keys(profs).sort((a,b)=>a.localeCompare(b));
     if (hosts.length === 0) {
       const empty = document.createElement('div');
-      empty.style.color = 'var(--muted)';
+      empty.className = 'muted';
       empty.textContent = 'No server profiles yet. Click "Add Server" to create one.';
       listEl.appendChild(empty);
     } else {
@@ -182,12 +182,11 @@ export function createProfilesPanel({ onConnect }) {
 
   // Inline editor dialog
   function openEditor(host) {
-    // load current or new
     const dialog = document.createElement('div');
-    dialog.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.5);display:grid;place-items:center;z-index:50;';
+    dialog.className = 'modal';
     dialog.innerHTML = `
-      <div style="width:520px;border:1px solid var(--border);background:var(--panel);border-radius:10px;padding:16px;">
-        <h4 style="margin:0 0 8px 0;">${host ? 'Edit Server' : 'Add Server'}</h4>
+      <div class="modal-card">
+        <h4 class="h4-tight">${host ? 'Edit Server' : 'Add Server'}</h4>
         <div class="form-row"><label>Host</label><input id="eHost" type="text" ${host?'disabled':''}/></div>
         <div class="form-row"><label>Port</label><input id="ePort" type="number" value="6697"/></div>
         <div class="form-row"><label>TLS</label><input id="eTLS" type="checkbox" checked/></div>
@@ -203,7 +202,7 @@ export function createProfilesPanel({ onConnect }) {
           </select>
         </div>
         <div class="form-row" id="eAuthUserRow" style="display:none;">
-          <label>Username</label><input id="eAuthUser" type="text" placeholder="SASL only · leave empty to inherit"/>
+          <label>Username</label><input id="eAuthUser" type="text" placeholder="SASL only — leave empty to inherit"/>
         </div>
         <div class="form-row" id="eAuthPassRow" style="display:none;">
           <label>Password</label><input id="eAuthPass" type="password" placeholder="leave empty to inherit"/>

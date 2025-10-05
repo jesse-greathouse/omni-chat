@@ -23,7 +23,7 @@ export class TranscriptBuffer {
     // Keep auto-scroll state in sync with user scrolling.
     // If close enough to the bottom, snap and keep following.
     this._onScroll = () => {
-      if (this._ignoreScroll) return; // programmatic scroll; don’t flip intent
+      if (this._ignoreScroll) return; // programmatic scroll; don't flip intent
       const dist = this._distanceFromBottom();
       const near = dist <= this.snapThreshold;
       this._atBottom = near;

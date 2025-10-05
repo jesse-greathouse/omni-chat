@@ -7,11 +7,7 @@ export function createNetworkView() {
   chanList.className = 'chan-list';
 
   const chanHost = document.createElement('div');
-  chanHost.className = 'chan-host';
-  chanHost.style.minHeight = 0;
-  chanHost.style.height = '100%';    // allow children to size to view
-  chanHost.style.position = 'relative';
-  chanHost.style.gridColumn = '2';
+  chanHost.className = 'chan-host min-h-0 h-100 pos-rel';
 
   // Order: sidebar then host
   view.appendChild(chanList);
