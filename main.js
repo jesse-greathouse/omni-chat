@@ -1,5 +1,5 @@
 import Store from 'electron-store';
-import { app, BrowserWindow, ipcMain, Menu, Tray, nativeImage, shell } from 'electron';
+import { app, session, BrowserWindow, ipcMain, Menu, Tray, nativeImage, shell } from 'electron';
 import path from 'node:path';
 import os from 'node:os';
 import fs from 'node:fs';
@@ -9,7 +9,7 @@ import readline from 'node:readline';
 import { spawn, execFile, spawnSync } from 'node:child_process';
 
 /* =============================================================================
-   Globals
+  Globals
 ============================================================================= */
 const sessions = new Map();
 const dmWindows = new Map();
@@ -22,7 +22,7 @@ let bootstrapLogPath = null;
 let _cachedOverlayPng = null
 
 /* =============================================================================
-   Paths & Small Utilities
+  Paths & Small Utilities
 ============================================================================= */
 const isWin = process.platform === 'win32';
 
@@ -165,7 +165,7 @@ function createDMWindow(sessionId, peer, bootLine ) {
 }
 
 /* =============================================================================
-   Settings & Profiles
+  Settings & Profiles
 ============================================================================= */
 const settings = new Store({
   name: 'omni-chat',
@@ -247,7 +247,7 @@ ipcMain.handle('profiles:delete', (_e, host) => {
 ipcMain.handle('profiles:resolve', (_e, host) => resolveServerProfile(String(host || '').trim()));
 
 /* =============================================================================
-   Backend Discovery (opam env + omni client)
+  Backend Discovery (opam env + omni client)
 ============================================================================= */
 function canonicalSessionKey(opts) {
   const nick = String(opts.nick || '').trim().toLowerCase();
@@ -291,19 +291,19 @@ async function resolveOmniIrcClientPath(env) {
   const exeName = isWin ? 'omni-irc-client.exe' : 'omni-irc-client';
   if (process.env.OMNI_IRC_CLIENT) return process.env.OMNI_IRC_CLIENT;
 
-  // 1) dev build guess
+  // dev build guess
   try {
     const guess = path.resolve(app.getAppPath(), '..', 'omni-irc', '_build', 'install', 'default', 'bin', exeName);
     if (fs.existsSync(guess)) return guess;
   } catch {}
 
-  // 2) direct switch bin: $OPAMROOT/$OPAMSWITCH/bin
+  // direct switch bin: $OPAMROOT/$OPAMSWITCH/bin
   const root = env.OPAMROOT || path.join(os.homedir(), '.opam');
   const sw   = env.OPAMSWITCH || 'omni-irc-dev';
   const fromSwitch = path.join(root, sw, 'bin', exeName);
   if (fs.existsSync(fromSwitch)) return fromSwitch;
 
-  // 3) opam var bin (if opam is callable)
+  // opam var bin (if opam is callable)
   try {
     const opamExe = resolveTool(isWin ? 'opam.exe' : 'opam',
       ['/opt/homebrew/bin','/usr/local/bin','/opt/local/bin']);
@@ -314,7 +314,7 @@ async function resolveOmniIrcClientPath(env) {
     }
   } catch {}
 
-  // 4) fall back to PATH (spawn will succeed if PATH is seeded)
+  // fall back to PATH (spawn will succeed if PATH is seeded)
   return exeName;
 }
 
@@ -360,7 +360,7 @@ async function backendReady() {
 }
 
 /* =============================================================================
-   Bootstrap (Unified: terminal | background)
+  Bootstrap (Unified: terminal | background)
 ============================================================================= */
 function pickPwsh() {
   const tryWhere = (cmd) => {
@@ -519,7 +519,7 @@ read -r _
 
 
 /* =============================================================================
-   Session Manager
+  Session Manager
 ============================================================================= */
 async function startSession(sessionId, opts) {
   const { env, exe } = await ensureClientBinary();
@@ -617,7 +617,7 @@ async function restartSession(sessionId, opts) {
 }
 
 /* =============================================================================
-   Windows / Menu / Tray
+  Windows / Menu / Tray
 ============================================================================= */
 function createWindow() {
   const iconWinLinux = isWin
@@ -698,7 +698,7 @@ function setupTray() {
 }
 
 /* =============================================================================
-   IPC Wiring
+  IPC Wiring
 ============================================================================= */
 function setupIPC() {
   // Sessions
@@ -742,16 +742,13 @@ function setupIPC() {
     const w = dmWindows.get(dmKey(sessionId, peer));
     if (!w || w.isDestroyed()) return;
 
-    // play the notification sound
-    const cueSound = () => {
-      try { w.webContents.send('dm:play-sound'); } catch {}
+    // tell the renderer "a DM notify happened" (renderer plays sound)
+    const cueNotify = () => {
+      try { w.webContents.send('dm:notify', { sessionId, peer }); } catch {}
     };
 
-    if (w.webContents.isLoading()) {
-      w.webContents.once('did-finish-load', cueSound);
-    } else {
-      cueSound();
-    }
+    if (w.webContents.isLoading()) w.webContents.once('did-finish-load', cueNotify);
+    else cueNotify();
 
     if (process.platform === 'win32') {
       const setOverlay = () => {
@@ -812,7 +809,7 @@ function setupIPC() {
 }
 
 /* =============================================================================
-   Installer Window (first-run)
+  Installer Window (first-run)
 ============================================================================= */
 function createInstallerWindow() {
   installerWin = new BrowserWindow({
@@ -830,7 +827,7 @@ function createInstallerWindow() {
 }
 
 /* =============================================================================
-   Boot
+  Boot
 ============================================================================= */
 async function ensureBackendReadyAtStartup() {
   const ok = await backendReady();
@@ -842,6 +839,25 @@ async function ensureBackendReadyAtStartup() {
 
 app.whenReady().then(async () => {
   if (isWin) { try { app.setAppUserModelId('com.omnichat.app'); } catch {} }
+
+  const filter = { urls: ['file://*/*'] };
+  session.defaultSession.webRequest.onHeadersReceived(filter, (details, callback) => {
+    const csp = [
+      "default-src 'self'",
+      "script-src 'self'",
+      "style-src 'self' 'unsafe-inline'",
+      "img-src 'self' data: file:",
+      "media-src 'self' data: file:",
+      "connect-src 'self' ws: wss:",
+      "font-src 'self' data: file:",
+      "frame-src 'none'",
+      "frame-ancestors 'none'"
+    ].join('; ');
+
+    const headers = { ...details.responseHeaders, 'Content-Security-Policy': [csp] };
+    callback({ responseHeaders: headers });
+  });
+
   // Make brew/macports visible when launched from Finder
   seedUnixPath(process.env);
   setupIPC();
