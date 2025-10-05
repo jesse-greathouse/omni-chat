@@ -33,6 +33,7 @@ let ding = null;
 try {
   ding = new Audio('../build/wav/notification.wav');
   ding.preload = 'auto';
+  ding.addEventListener('error', e => console.error('ding load error', e));
 } catch {}
 
 // Play when main/canon signals a DM notify

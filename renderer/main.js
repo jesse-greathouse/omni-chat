@@ -16,7 +16,7 @@ window.addEventListener('unhandledrejection', e => errors.append(`[promise] ${e.
 
 let activeSessionId = null;
 const ingestor = new Ingestor({ onError: (s) => errors.append(s) });
-const tabs = new Map(); // id -> { id, title, layerEl, netId? }
+const tabs = new Map();
 
 function renderTabs() {
   tabbarEl.textContent = '';

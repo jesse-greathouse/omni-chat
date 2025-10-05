@@ -35,6 +35,7 @@ header .status.err { color: var(--danger); }
 main { height: calc(100% - 100px); display: grid; grid-template-rows: 1fr auto; }
 pre#log {
   margin: 0;
+  height: 60vh;
   padding: 14px var(--pad-x);
   overflow: auto;
   white-space: pre-wrap;

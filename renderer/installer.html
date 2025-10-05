@@ -2,13 +2,9 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta http-equiv="Content-Security-Policy"
-        content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; media-src 'self' data:">
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Omni Chat - First-time Setup</title>
-  <!-- shared -->
   <link rel="stylesheet" href="./styles/index.css" />
-  <!-- installer-only layout -->
   <link rel="stylesheet" href="./styles/layout-installer.css" />
 </head>
 <body>
@@ -23,7 +19,7 @@
       automatically on success. If something fails, the window will show an error and wait
       for you to press Enter.</p>
     </div>
-    <pre id="log" style="margin:0;padding:14px 18px;white-space:pre-wrap;overflow:auto;height:60vh;"></pre>
+    <pre id="log"></pre>
     <div class="actions">
       <button id="btnRun" class="btn btn--primary">Install Ocaml Backend</button>
       <button id="btnOpenLogs" class="btn">Open logs folder</button>
@@ -32,29 +28,6 @@
     </div>
   </main>
 
-  <script>
-  (function () {
-    var statusEl= document.getElementById('status');
-    var btnRun  = document.getElementById('btnRun');
-    var btnOpen = document.getElementById('btnOpenLogs');
-    var btnGo   = document.getElementById('btnProceed');
-
-    if (!window.api || !window.api.bootstrap) { console.error('preload/api missing'); return; }
-    var logEl   = document.getElementById('log');
-    function appendLog(s){ if(!logEl) return; logEl.textContent += String(s); logEl.scrollTop = logEl.scrollHeight; }
-
-    var offLog = window.api.bootstrap.onLog(function(line){ appendLog(line); });
-    var offDone = window.api.bootstrap.onDone(function(){ statusEl.textContent = 'ok'; statusEl.classList.add('ok'); });
-    var offErr  = window.api.bootstrap.onError(function(code){ statusEl.textContent = 'error'; statusEl.classList.add('err'); appendLog('\n[bootstrap] exited with code '+code+'\n'); });
-
-    btnRun.addEventListener('click', function () {
-      statusEl.textContent = 'Installing...';
-      statusEl.classList.remove('ok','err');
-      window.api.bootstrap.runInTerminal();
-    });
-    btnOpen.addEventListener('click', function () { window.api.bootstrap.openLogsDir(); });
-    btnGo.addEventListener('click', function () { window.api.bootstrap.proceedIfReady(); });
-  })();
-  </script>
+  <script src="./installer.js"></script>
 </body>
 </html>
