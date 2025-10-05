@@ -14,7 +14,7 @@ export class ChannelListPane {
     this.top.className = 'chanlist-top';
 
     this.refreshBtn = document.createElement('button');
-    this.refreshBtn.className = 'chanlist-btn';
+    this.refreshBtn.className = 'btn btn--sm';
     this.refreshBtn.textContent = 'Refresh list';
 
     this.info = document.createElement('div');
@@ -22,7 +22,7 @@ export class ChannelListPane {
     this.info.textContent = 'Sorted by users (desc)';
 
     const spacer = document.createElement('div');
-    spacer.style.flex = '1';
+    spacer.className = 'flex-1';
 
     this.top.append(this.refreshBtn, spacer, this.info);
     this.root.appendChild(this.top);
@@ -50,10 +50,8 @@ export class ChannelListPane {
     const tr = document.createElement('tr');
     const thUsers = document.createElement('th');
     thUsers.className = 'num';
-    thUsers.style.width = '12%';
     thUsers.textContent = 'Users';
     const thChan = document.createElement('th');
-    thChan.style.width = '28%';
     thChan.textContent = 'Channel';
     const thTopic = document.createElement('th');
     thTopic.textContent = 'Topic';
@@ -67,7 +65,7 @@ export class ChannelListPane {
     // empty
     this.empty = document.createElement('div');
     this.empty.className = 'chanlist-empty';
-    this.empty.textContent = 'No channel data yet. Click “Refresh list”.';
+    this.empty.textContent = 'No channel data yet. Click "Refresh list".';
     this.empty.hidden = true;
     this.wrap.appendChild(this.empty);
 
@@ -103,7 +101,7 @@ export class ChannelListPane {
     this.isLoading = !!on;
     this.loading.hidden = !this.isLoading;
     this.refreshBtn.disabled = this.isLoading;
-    this.info.textContent = this.isLoading ? 'Refreshing…' : 'Sorted by users (desc)';
+    this.info.textContent = this.isLoading ? 'Refreshing...' : 'Sorted by users (desc)';
   }
 
   render() {

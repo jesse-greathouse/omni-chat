@@ -5,87 +5,21 @@
   <title>DM</title>
   <meta http-equiv="Content-Security-Policy"
         content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; media-src 'self' data:">
-  <style>
-    * { box-sizing: border-box; }          /* borders don’t add overflow */
-    :root {
-      /* local palette so this file is self-contained */
-      --bg: #0f1115; --fg: #e6e6e6; --muted:#9aa0a6; --panel:#141821; --border:#2a2f3a;
-      --footer-h: 46px;          /* match main window feel */
-    }
-    html,body{
-      height:100%; margin:0; background:var(--bg); color:var(--fg); overflow:hidden; 
-      font:13px/1.4 ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;}
-      #wrap {
-        height:100%;
-        display:grid;
-        grid-template-rows: auto 1fr var(--footer-h);
-        border:1px solid var(--border);
-        background:var(--panel);
-      }
-
-      #log{
-        min-height:0;              /* <-- crucial in CSS grid */
-        overflow-y:auto;                       /* only vertical scroll */
-        overflow-x:hidden;                     /* never horizontal */
-        white-space:pre-wrap; 
-        word-break:break-word;
-        overflow-wrap:anywhere;
-        padding:10px 12px; background:#0f121a;
-      }
-      #row{
-        display:grid;
-        grid-template-columns:auto 1fr;
-        gap:8px;
-        padding:8px;
-        height:var(--footer-h);    /* keep footer compact */
-        border-top:1px solid var(--border);
-        background:var(--panel);
-      }
-      #profile {
-        display:grid;
-        grid-template-columns: repeat(4, minmax(0,1fr));
-        gap:8px 10px;
-        padding:10px 12px;
-        border-bottom:1px solid var(--border);
-        background:#12182a;
-      }
-      #profile .kv {
-        display:grid;
-        grid-template-rows:auto auto;
-        gap:2px;
-        padding:8px;
-        border:1px solid var(--border);
-        border-radius:8px;
-        min-height:54px;
-        background:#0f1424;
-      }
-      #profile .kv .k { font-size:11px; color:var(--muted); }
-      #profile .kv .v { font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-      #profile.disabled {
-        opacity:.55;
-        filter: grayscale(30%);
-      }
-      #profile .empty {
-        grid-column: 1 / -1;
-        padding:8px 0 2px;
-        color:var(--muted);
-      }
-      .send-btn{padding:8px 12px;border:1px solid var(--border);background:#141b2b;color:var(--fg);border-radius:6px;cursor:pointer;}
-        .msg-input{
-        width:100%;
-        padding:8px 10px;
-        border:1px solid var(--border);
-        background:#0e1320; color:var(--fg);
-        border-radius:6px; outline:none;
-      }
-  </style>
+  <!-- shared -->
+  <link rel="stylesheet" href="./styles/index.css" />
+  <!-- dm-only layout -->
+  <link rel="stylesheet" href="./styles/layout-dm.css" />
 </head>
 <body>
-  <div id="wrap">
-    <div id="profile" aria-live="polite"></div>
-    <div id="log"></div>
-    <div id="row"><button id="send" class="send-btn">Send</button><input id="input" class="msg-input" placeholder=""/></div>
+  <div id="wrap" class="dm-wrap panel">
+    <div id="profile" class="dm-profile" aria-live="polite"></div>
+    <div id="log" class="transcript"></div>
+    <div id="row" class="input-row">
+      <button id="send" class="btn send-btn">Send</button>
+      <input id="input" class="msg-input" placeholder=""/>
+    </div>
   </div>
-  <script type="module" src="dm.js"></script>
+
+  <script type="module" src="./dm.js"></script>
 </body>
 </html>

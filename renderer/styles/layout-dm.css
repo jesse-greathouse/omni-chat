@@ -1,0 +1,42 @@
+.dm-wrap {
+  height: 100%;
+  display: grid;
+  grid-template-rows: auto 1fr var(--footer-h);
+}
+
+/* Profile header grid */
+.dm-profile {
+  display: grid;
+  grid-template-columns: repeat(var(--profile-cols), minmax(0, 1fr));
+  gap: var(--gap-md) var(--space-10);
+  padding: var(--pad-y) var(--pad-x);
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-alt);
+}
+
+/* “key/value” cards */
+.dm-profile .kv {
+  display: grid;
+  grid-template-rows: auto auto;
+  gap: 2px;
+  padding: var(--space-8);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-8);
+  min-height: 54px;
+  background: var(--input-bg);
+}
+.dm-profile .kv .k { font-size: 11px; color: var(--muted); }
+.dm-profile .kv .v { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.dm-profile.disabled { opacity: .55; filter: grayscale(30%); }
+
+.dm-profile .empty {
+  grid-column: 1 / -1;
+  padding: var(--space-8) 0 2px;
+  color: var(--muted);
+}
+
+/* Footer input row (reuses shared .input-row) */
+#row.input-row {
+  grid-template-columns: auto 1fr; /* button then input */
+}

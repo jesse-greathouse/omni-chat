@@ -1,0 +1,71 @@
+:root{
+  /* breakpoints */
+  --bp-sm: 480px;
+  --bp-md: 880px;
+  --bp-lg: 1200px;
+
+  /* raw palette (implementation detail) */
+  --c-bg: #0f1115;
+  --c-fg: #e6e6e6;
+  --c-muted: #9aa0a6;
+  --c-accent: #4c8bf5;
+  --c-accent-2: #2f6feb;
+  --c-error: #ffdddd;
+  --c-error-bg: #2a0000;
+  --c-panel: #141821;
+  --c-panel-2: #181c26;
+  --c-border: #2a2f3a;
+  --c-tab-bg: #1b2130;
+  --c-tab-active: #22293b;
+  --c-transcript-bg: #0f121a;
+  --c-users-bg: #101521;
+  --c-input-bg: #0e1320;
+  --c-button-bg: #141b2b;
+
+  /* semantic tokens (use these everywhere) */
+  --bg: var(--c-bg);
+  --fg: var(--c-fg);
+  --muted: var(--c-muted);
+  --primary: var(--c-accent);
+  --primary-strong: var(--c-accent-2);
+  --danger: var(--c-error);
+  --danger-bg: var(--c-error-bg);
+  --surface: var(--c-panel);
+  --surface-alt: var(--c-panel-2);
+  --border: var(--c-border);
+  --tab-bg: var(--c-tab-bg);
+  --tab-active: var(--c-tab-active);
+  --transcript-bg: var(--c-transcript-bg);
+  --users-bg: var(--c-users-bg);
+  --input-bg: var(--c-input-bg);
+  --button-bg: var(--c-button-bg);
+  /* layout sizing */
+  --topbar-h: 44px;
+  --tab-h: 30px;
+  --sidebar-w: 220px;
+  --users-w: 400px;
+
+  /* common paddings */
+  --pad-y: 10px;
+  --pad-x: 12px;
+
+  /* dm profile grid */
+  --profile-cols: 4;
+
+  /* sizing */
+  --radius-6: 6px;
+  --radius-8: 8px;
+  --radius-10: 10px;
+  --space-6: 6px;
+  --space-8: 8px;
+  --space-10: 10px;
+  --footer-h: 50px;
+  --gap-sm: var(--space-6);
+  --gap-md: var(--space-8);
+  --gap-lg: var(--space-10);
+  --footer-gap: var(--gap-sm);
+
+  /* typography */
+  --font-ui: 13px/1.4 ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}

@@ -1,4 +1,3 @@
-// Scrollable message area with optional topic header
 import { el } from '../../lib/dom.js';
 
 export class TranscriptView {
@@ -9,9 +8,8 @@ export class TranscriptView {
     // The OUTER element is the grid child and carries the `.transcript` class
     // so all the existing CSS (background, overflow, padding) applies to the full area.
     this.root = document.createElement('div');
-    this.root.className = 'transcript';
-    this.root.style.position = 'relative';
-    this.root.style.minHeight = '0';
+    this.root.className = 'transcript with-footer-gap';
+    this.root.classList.add('pane-root');
     this.withTopic = !!opts.withTopic;
 
     if (this.withTopic) {

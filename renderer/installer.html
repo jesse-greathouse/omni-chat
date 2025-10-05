@@ -6,51 +6,10 @@
         content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; media-src 'self' data:">
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Omni Chat - First-time Setup</title>
-  <style>
-    :root {
-      color-scheme: light dark;
-      --bg: #0b0e14;
-      --fg: #e6e6e6;
-      --muted: #9aa4b2;
-      --accent: #5cc8ff;
-      --ok: #57d68d;
-      --err: #ff6b6b;
-      --panel: #121722;
-    }
-    html, body {
-      margin: 0; padding: 0; height: 100%;
-      background: var(--bg); color: var(--fg);
-      font: 14px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
-    }
-    header {
-      padding: 16px 18px; border-bottom: 1px solid #1b2233;
-      display: flex; align-items: center; gap: 8px;
-      background: var(--panel);
-      position: sticky; top: 0; z-index: 2;
-    }
-    header h1 { font-size: 16px; margin: 0; font-weight: 600; }
-    header .status { margin-left: auto; font-weight: 600; }
-    header .status.ok { color: var(--ok); }
-    header .status.err { color: var(--err); }
-    main { height: calc(100% - 100px); display: grid; grid-template-rows: 1fr auto; }
-    pre#log {
-      margin: 0; padding: 14px 18px;
-      overflow: auto; white-space: pre-wrap; word-break: break-word;
-    }
-    .actions {
-      display: flex; gap: 8px; padding: 12px 14px; border-top: 1px solid #1b2233; background: var(--panel);
-    }
-    button {
-      appearance: none; border: 1px solid #2a3448; background: #182035; color: var(--fg);
-      padding: 8px 12px; border-radius: 6px; font-weight: 600; cursor: pointer;
-    }
-    button.primary { border-color: #2e496a; background: #1d3557; }
-    button.success { border-color: #2d5a45; background: #1b3a2e; color: var(--ok); }
-    button:disabled { opacity: .55; cursor: default; }
-    .spacer { flex: 1 1 auto; }
-    .hint { color: var(--muted); margin-left: 8px; }
-    .mono { font-family: inherit; color: var(--accent); }
-  </style>
+  <!-- shared -->
+  <link rel="stylesheet" href="./styles/index.css" />
+  <!-- installer-only layout -->
+  <link rel="stylesheet" href="./styles/layout-installer.css" />
 </head>
 <body>
   <header>
@@ -59,17 +18,17 @@
   </header>
 
   <main>
-    <div style="padding:16px;">
+    <div class="intro">
       <p>This will open a Terminal window and run the backend bootstrap. It will close
       automatically on success. If something fails, the window will show an error and wait
       for you to press Enter.</p>
     </div>
     <pre id="log" style="margin:0;padding:14px 18px;white-space:pre-wrap;overflow:auto;height:60vh;"></pre>
     <div class="actions">
-      <button id="btnRun">Install Ocaml Backend</button>
-      <button id="btnOpenLogs">Open logs folder</button>
+      <button id="btnRun" class="btn btn--primary">Install Ocaml Backend</button>
+      <button id="btnOpenLogs" class="btn">Open logs folder</button>
       <span class="spacer"></span>
-      <button id="btnProceed" class="success">Check & Continue</button>
+      <button id="btnProceed" class="btn btn--success">Check & Continue</button>
     </div>
   </main>
 
@@ -84,13 +43,12 @@
     var logEl   = document.getElementById('log');
     function appendLog(s){ if(!logEl) return; logEl.textContent += String(s); logEl.scrollTop = logEl.scrollHeight; }
 
-    // subscribe to background-mode logs (mac auto-tail + background run)
     var offLog = window.api.bootstrap.onLog(function(line){ appendLog(line); });
     var offDone = window.api.bootstrap.onDone(function(){ statusEl.textContent = 'ok'; statusEl.classList.add('ok'); });
     var offErr  = window.api.bootstrap.onError(function(code){ statusEl.textContent = 'error'; statusEl.classList.add('err'); appendLog('\n[bootstrap] exited with code '+code+'\n'); });
 
     btnRun.addEventListener('click', function () {
-      statusEl.textContent = 'Installing…';
+      statusEl.textContent = 'Installing...';
       statusEl.classList.remove('ok','err');
       window.api.bootstrap.runInTerminal();
     });
@@ -98,6 +56,5 @@
     btnGo.addEventListener('click', function () { window.api.bootstrap.proceedIfReady(); });
   })();
   </script>
-
 </body>
 </html>

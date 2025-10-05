@@ -1,0 +1,51 @@
+/* Palette overrides specifically for installer window */
+:root {
+  color-scheme: light dark;
+  --bg: #0b0e14;
+  --fg: #e6e6e6;
+  --muted: #9aa4b2;
+  --primary: #5cc8ff;
+  --primary-strong: #5cc8ff;
+  --danger: #ff6b6b;
+  --danger-bg: #2a0000;
+  --surface: #121722;
+  --border: #1b2233;
+  --tab-bg: #182035;
+  --button-bg: #182035;
+  --btn-primary-border: #2e496a;
+  --btn-primary-bg: #1d3557;
+  --btn-primary-fg: var(--fg);
+  --btn-success-border: #2d5a45;
+  --btn-success-bg: #1b3a2e;
+  --btn-success-fg: #57d68d;
+}
+
+/* Structure */
+header {
+  padding: 16px var(--pad-x); border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; gap: var(--gap-mid);
+  background: var(--surface);
+  position: sticky; top: 0; z-index: 2;
+}
+header h1 { font-size: 16px; margin: 0; font-weight: 600; }
+header .status { margin-left: auto; font-weight: 600; }
+header .status.ok { color: #57d68d; }
+header .status.err { color: var(--danger); }
+
+main { height: calc(100% - 100px); display: grid; grid-template-rows: 1fr auto; }
+pre#log {
+  margin: 0;
+  padding: 14px var(--pad-x);
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.intro { padding: 16px; }
+
+.actions {
+  display: flex; gap: var(--gap-mid); padding: 12px var(--pad-x); border-top: 1px solid var(--border); background: var(--surface);
+}
+
+.hint { color: var(--muted); margin-left: var(--space-8); }
+.mono { font-family: var(--font-mono); color: var(--primary); }
+.modal-card { width: 520px; border: 1px solid var(--border); background: var(--surface); border-radius: var(--radius-10); padding: 16px; }
