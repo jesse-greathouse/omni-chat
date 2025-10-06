@@ -5,7 +5,8 @@ export class Pane {
   constructor(opts = {}) {
     this.id = opts.id || null;
     this.root = document.createElement('div');
-    this.root.classList.add('pane-root', 'min-h-0');
+    // Hidden by default; callers explicitly show() via activation.
+    this.root.classList.add('pane-root', 'min-h-0', 'hidden');
     this._mounted = false;
     this._visible = false;
     this.disposables = createDisposables();
@@ -15,7 +16,6 @@ export class Pane {
     if (this._mounted) return;
     hostEl.appendChild(this.root);
     this._mounted = true;
-    this.show();
     this.layout();
   }
 

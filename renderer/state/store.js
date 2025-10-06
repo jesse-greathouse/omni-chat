@@ -235,6 +235,7 @@ export function ensureDMWindow(net, peerNick) {
   if (net.dmWindows.has(key)) return net.dmWindows.get(key);
   const pane = new PrivmsgPane(net, key, () => closeDMWindow(net, key));
   pane.mount(net.viewEl); // float within this network view
+  pane.show();           // DM panes should be visible immediately
   const rec = { pane, peer: key };
   net.dmWindows.set(key, rec);
   return rec;

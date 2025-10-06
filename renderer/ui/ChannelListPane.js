@@ -5,6 +5,7 @@ export class ChannelListPane {
     this.net = net;
     this.items = [];
     this.hasRequestedOnce = false;
+    this.rowMap = new Map(); // name -> {tr, tdUsers, tdTopic, btn}
 
     this.root = document.createElement('div');
     this.root.className = 'chanlist-pane hidden';
@@ -76,6 +77,14 @@ export class ChannelListPane {
       this.render();
       if (this.isLoading && this.items.length > 0) this.setLoading(false);
     });
+
+    // Incremental per-channel updates that should NOT reorder the table
+    this._offUpdate = events.on(EVT.CHAN_UPDATE, (payload) => {
+      if (!payload || payload.sessionId !== this.net.sessionId) return;
+      const { channel } = payload;
+      if (!channel || !channel.name) return;
+      this.updateRow(channel.name, channel.users ?? 0, channel.topic ?? '');
+    });
   }
 
   mount(container) { container.appendChild(this.root); }
@@ -103,48 +112,85 @@ export class ChannelListPane {
 
   render() {
     const rows = this.items.slice().sort((a, b) => (b.users - a.users) || a.name.localeCompare(b.name));
-    this.tbody.innerHTML = '';
+    // snapshot reconcile: reuse rows when possible; remove ones not present
     if (rows.length === 0) {
       this.empty.hidden = this.isLoading ? true : false;
+      this.tbody.replaceChildren(); // clear
+      this.rowMap.clear();
       return;
     }
     this.empty.hidden = true;
 
+    const seen = new Set();
     const frag = document.createDocumentFragment();
     for (const { name, users, topic } of rows) {
-      const tr = document.createElement('tr');
-
-      const tdUsers = document.createElement('td');
-      tdUsers.className = 'num';
-      tdUsers.textContent = String(users ?? 0);
-
-      const tdName = document.createElement('td');
-      const btn = document.createElement('button');
-      btn.className = 'chan-btn';
-      btn.textContent = name;
-      btn.addEventListener('click', () => {
-        if (!this.net?.sessionId) return;
-        const chan = (name.startsWith('#') || name.startsWith('&')) ? name : `#${name}`;
-        api.sessions.send(this.net.sessionId, `/join ${chan}`);
-      });
-      tdName.appendChild(btn);
-
-      const tdTopic = document.createElement('td');
-      const t = document.createElement('div');
-      t.className = 'topic';
-      t.textContent = topic || '';
-      tdTopic.appendChild(t);
-
-      tr.appendChild(tdUsers);
-      tr.appendChild(tdName);
-      tr.appendChild(tdTopic);
+      const tr = this.ensureRow(name);
+      this.setRowValues(name, users ?? 0, topic ?? '');
       frag.appendChild(tr);
+      seen.add(name);
     }
-    this.tbody.appendChild(frag);
+    // mount in sorted order
+    this.tbody.replaceChildren(frag);
+    // drop rows that no longer exist
+    for (const key of this.rowMap.keys()) {
+      if (!seen.has(key)) this.rowMap.delete(key);
+    }
+  }
+
+  ensureRow(name) {
+    const key = String(name);
+    let rec = this.rowMap.get(key);
+    if (rec) return rec.tr;
+
+    const tr = document.createElement('tr');
+
+    const tdUsers = document.createElement('td');
+    tdUsers.className = 'num';
+
+    const tdName = document.createElement('td');
+    const btn = document.createElement('button');
+    btn.className = 'chan-btn';
+    btn.textContent = name;
+    btn.addEventListener('click', () => {
+      if (!this.net?.sessionId) return;
+      const chan = (name.startsWith('#') || name.startsWith('&')) ? name : `#${name}`;
+      api.sessions.send(this.net.sessionId, `/join ${chan}`);
+    });
+    tdName.appendChild(btn);
+
+    const tdTopic = document.createElement('td');
+    const t = document.createElement('div');
+    t.className = 'topic';
+    tdTopic.appendChild(t);
+
+    tr.appendChild(tdUsers);
+    tr.appendChild(tdName);
+    tr.appendChild(tdTopic);
+
+    this.rowMap.set(key, { tr, tdUsers, tdTopic: t, btn });
+    return tr;
+  }
+
+  setRowValues(name, users, topic) {
+    const rec = this.rowMap.get(String(name));
+    if (!rec) return;
+    rec.tdUsers.textContent = String(users ?? 0);
+    rec.btn.textContent = name;           // name is stable, but cheap to keep in sync
+    rec.tdTopic.textContent = topic || '';
+  }
+
+  updateRow(name, users, topic) {
+    // create the row if it doesn't exist yet (append at end to avoid reordering)
+    if (!this.rowMap.has(String(name))) {
+      const tr = this.ensureRow(name);
+      this.tbody.appendChild(tr);
+    }
+    this.setRowValues(name, users, topic);
   }
 
   destroy() {
     try { this._off?.(); } catch {}
+    try { this._offUpdate?.(); } catch {}
     try { this.refreshBtn?.removeEventListener('click', this._boundRefresh); } catch {}
     try { this.root?.remove(); } catch {}
   }

@@ -10,7 +10,7 @@ export class ChannelPane extends Pane {
     this.net = net;
     this.name = name;
 
-    this.root.className = 'chan-pane pane--with-composer';
+    this.root.classList.add('chan-pane', 'pane--with-composer');
 
     this.view = new TranscriptView({ withTopic: true });
     this.view.element.classList.add('transcript--with-divider');

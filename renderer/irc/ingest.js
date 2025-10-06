@@ -40,6 +40,16 @@ function publishChanlistSnapshot(net) {
   });
 }
 
+function publishChanUpdate(net, name) {
+  if (!name) return;
+  const rec = net.chanListTable.get(name);
+  if (!rec) return;
+  events.emit(EVT.CHAN_UPDATE, {
+    sessionId: net.sessionId,
+    channel: rec,
+  });
+}
+
 function upsertChannelStore(net, chObj) {
   const name  = chObj.name || chObj.key || chObj.channel;
   if (!name) return;
@@ -50,7 +60,9 @@ function upsertChannelStore(net, chObj) {
 
   // keep chanlist table in sync; accept either count or array
   const usersN = Number(chObj.users?.length || chObj.users || 0) || 0;
-  net.chanListTable.set(name, { name, users: usersN, topic: topic || '' });
+  const rec = { name, users: usersN, topic: topic || '' };
+  net.chanListTable.set(name, rec);
+  return rec;
 }
 
 export class Ingestor {
@@ -101,8 +113,16 @@ export class Ingestor {
         if (op === K.OP.SNAPSHOT || op === K.OP.UPSERT) {
           const assoc = msg.channels || {};
           const arr = Array.isArray(assoc) ? assoc : Object.values(assoc);
-          for (const ch of arr) upsertChannelStore(net, ch);
-          publishChanlistSnapshot(net); // FIX: single emission
+          if (op === K.OP.SNAPSHOT) {
+            for (const ch of arr) upsertChannelStore(net, ch);
+            publishChanlistSnapshot(net); // full rebuild only on true snapshot
+          } else {
+            // incremental upserts => per-row updates, no full rebuild
+            for (const ch of arr) {
+              const rec = upsertChannelStore(net, ch);
+              if (rec) events.emit(EVT.CHAN_UPDATE, { sessionId: net.sessionId, channel: rec });
+            }
+          }
         } else if (op === K.OP.REMOVE && Array.isArray(msg.names)) {
           for (const n of msg.names) {
             net.chanMap.delete(n);
@@ -118,8 +138,8 @@ export class Ingestor {
       case K.TYPE.CHANNEL: {
         const ch = msg.channel || msg.payload || msg.data;
         if (ch) {
-          upsertChannelStore(net, ch);
-          publishChanlistSnapshot(net); // FIX: single emission
+          const rec = upsertChannelStore(net, ch);
+          if (rec) events.emit(EVT.CHAN_UPDATE, { sessionId: net.sessionId, channel: rec });
         }
         break;
       }

@@ -10,7 +10,7 @@ export class PrivmsgPane extends Pane {
     this.peer = peerNick;
     this.onClose = onClose;
 
-    this.root.className = 'console-pane';
+    this.root.classList.add('console-pane');
 
     this.view = new TranscriptView({ withTopic: false });
     this.composer = new Composer({

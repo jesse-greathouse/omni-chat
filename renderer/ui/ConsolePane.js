@@ -19,7 +19,7 @@ export class ConsolePane extends Pane {
       }
     });
 
-    this.root.className = 'console-pane pane--with-composer';
+    this.root.classList.add('console-pane', 'pane--with-composer');
     this.root.append(this.view.element, this.composer.el);
   }
 
