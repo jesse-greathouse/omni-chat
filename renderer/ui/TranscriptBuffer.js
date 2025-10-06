@@ -1,5 +1,5 @@
 export class TranscriptBuffer {
-  constructor(hostEl, { maxLines = 5000, pruneChunk = 1000, scrollEl = null, snapThreshold = 40 } = {}) {
+  constructor(hostEl, { maxLines = 2000, pruneChunk = 200, scrollEl = null, snapThreshold = 40 } = {}) {
     this.hostEl = hostEl;
     this.maxLines = maxLines;
     this.pruneChunk = pruneChunk;

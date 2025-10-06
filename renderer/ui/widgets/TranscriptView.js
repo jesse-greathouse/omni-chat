@@ -22,6 +22,8 @@ export class TranscriptView {
     this._lines = [];
     this._textNode = document.createTextNode('');
     this.root.appendChild(this._textNode);
+    this.maxLines = opts.maxLines ?? 2000;
+    this.pruneChunk = opts.pruneChunk ?? 200;
   }
 
   setTopic(t) {
@@ -37,10 +39,10 @@ export class TranscriptView {
 
   appendLine(s) {
     this._lines.push(String(s));
+    const over = this._lines.length - this.maxLines;
+    if (over > 0) this._lines.splice(0, Math.max(over, this.pruneChunk));
     this._textNode.nodeValue = this._lines.join('\n') + '\n';
-    requestAnimationFrame(() => {
-      this.root.scrollTop = this.root.scrollHeight;
-    });
+    requestAnimationFrame(() => { this.root.scrollTop = this.root.scrollHeight; });
   }
 
   get element() { return this.root; }
