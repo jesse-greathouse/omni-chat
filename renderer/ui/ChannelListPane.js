@@ -16,6 +16,7 @@ export class ChannelListPane {
     this.refreshBtn = document.createElement('button');
     this.refreshBtn.className = 'btn btn--sm';
     this.refreshBtn.textContent = 'Refresh list';
+    this.refreshBtn.addEventListener('click', () => this.requestList());
 
     this.info = document.createElement('div');
     this.info.className = 'chanlist-info';
@@ -69,11 +70,7 @@ export class ChannelListPane {
     this.empty.hidden = true;
     this.wrap.appendChild(this.empty);
 
-    // events
-    this.refreshBtn.addEventListener('click', () => this.requestList());
-
-    // subscribe to canonical chan snapshots
-    events.on(EVT.CHAN_SNAPSHOT, (payload) => {
+    this._off = events.on(EVT.CHAN_SNAPSHOT, (payload) => {
       if (!payload || payload.sessionId !== this.net.sessionId) return;
       this.items = Array.isArray(payload.items) ? payload.items : [];
       this.render();
@@ -144,5 +141,11 @@ export class ChannelListPane {
       frag.appendChild(tr);
     }
     this.tbody.appendChild(frag);
+  }
+
+  destroy() {
+    try { this._off?.(); } catch {}
+    try { this.refreshBtn?.removeEventListener('click', this._boundRefresh); } catch {}
+    try { this.root?.remove(); } catch {}
   }
 }

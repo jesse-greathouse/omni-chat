@@ -127,4 +127,9 @@ export class TranscriptBuffer {
     // Apply a lightweight visual refresh
     this._scheduleFrame();
   }
+
+  dispose() {
+    try { this.scrollEl.removeEventListener('scroll', this._onScroll, { passive: true }); } catch {}
+    this.clear();
+  }
 }
