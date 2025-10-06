@@ -1,3 +1,5 @@
+import { createDisposables } from '../../lib/disposables.js';
+
 export class Pane {
   /** @param {{id?:string}} [opts] */
   constructor(opts = {}) {
@@ -6,18 +8,17 @@ export class Pane {
     this.root.classList.add('pane-root', 'min-h-0');
     this._mounted = false;
     this._visible = false;
+    this.disposables = createDisposables();
   }
 
-  /** Mount under a host element once. */
   mount(hostEl) {
     if (this._mounted) return;
     hostEl.appendChild(this.root);
     this._mounted = true;
-    this.show(); // default visible when mounted by store.activateChannel
+    this.show();
     this.layout();
   }
 
-  /** Called on first mount and when container size changes (no-op by default). */
   layout() {}
 
   show() {
@@ -31,6 +32,7 @@ export class Pane {
   }
 
   destroy() {
+    try { this.disposables?.dispose?.(); } catch {}
     try { this.root.remove(); } catch {}
     this._mounted = false;
   }

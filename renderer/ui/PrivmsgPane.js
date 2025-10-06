@@ -1,22 +1,16 @@
-// renderer/ui/PrivmsgPane.js
 import { Pane } from './base/Pane.js';
 import { Composer } from './widgets/Composer.js';
 import { TranscriptView } from './widgets/TranscriptView.js';
 import { api } from '../lib/adapter.js';
 
 export class PrivmsgPane extends Pane {
-  /**
-   * @param {*} net
-   * @param {string} peerNick
-   * @param {()=>void} onClose
-   */
   constructor(net, peerNick, onClose) {
     super({ id: `dm:${net.id}:${peerNick}` });
     this.net = net;
     this.peer = peerNick;
     this.onClose = onClose;
 
-    this.root.className = 'console-pane'; // same layout as console (no users grid)
+    this.root.className = 'console-pane';
 
     this.view = new TranscriptView({ withTopic: false });
     this.composer = new Composer({
@@ -28,6 +22,9 @@ export class PrivmsgPane extends Pane {
     });
 
     this.root.append(this.view.element, this.composer.el);
+
+    // Example: if you later add buttons/shortcuts here, bind via this.disposables.on(...)
+    // This pane currently has no timers; base.destroy() still guarantees teardown.
   }
 
   appendLine(s) { this.view.appendLine(s); }

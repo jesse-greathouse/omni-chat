@@ -1,4 +1,4 @@
-import { ensureNetwork, activateNetwork, uiRefs } from './state/store.js';
+import { ensureNetwork, activateNetwork, uiRefs, destroyNetwork } from './state/store.js';
 import { Ingestor } from './irc/ingest.js';
 import { ErrorDock } from './ui/ErrorDock.js';
 import { createProfilesPanel } from './ui/connectionForm.js';
@@ -69,10 +69,20 @@ function activateTab(id) {
 function closeTab(id) {
   const t = tabs.get(id);
   if (t) {
+    // Stop backend (safe if not running)
     try { api.sessions.stop(id); } catch {}
+
+    // Destroy the associated network UI/panes/timers/listeners if present
+    if (t.netId) {
+      try { destroyNetwork(t.netId); } catch {}
+    }
+
+    // Remove the layer from the DOM
     try { t.layerEl.remove(); } catch {}
+
     tabs.delete(id);
   }
+
   const next = tabs.values().next().value;
   if (next) {
     activateTab(next.id);

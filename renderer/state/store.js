@@ -121,6 +121,51 @@ export const reducers = {
     dispatch({ type: A.DM_USER, sessionId, user }),
 };
 
+export function destroyNetwork(netId) {
+  const net = store.networks.get(netId);
+  if (!net) return;
+
+  // Destroy embedded DM panes
+  for (const [, rec] of net.dmWindows) {
+    try { rec.pane.destroy(); } catch {}
+  }
+  net.dmWindows.clear();
+
+  // Destroy channel panes
+  for (const [, ch] of net.channels) {
+    try { ch.pane.destroy(); } catch {}
+    try { ch.itemEl.remove(); } catch {}
+  }
+  net.channels.clear();
+
+  // Destroy console pane
+  if (net.console) {
+    try { net.console.pane.destroy(); } catch {}
+    try { net.console.itemEl.remove(); } catch {}
+    net.console = null;
+  }
+
+  // Destroy channel-list pane
+  if (net.chanListTab) {
+    try { net.chanListTab.pane.destroy(); } catch {}
+    try { net.chanListTab.itemEl.remove(); } catch {}
+    net.chanListTab = null;
+  }
+
+  // Remove the network view
+  try { net.viewEl.remove(); } catch {}
+
+  // Clear data maps
+  net.chanMap.clear();
+  net.userMap.clear();
+  net.chanListTable.clear();
+
+  store.networks.delete(netId);
+
+  // If this was active, clear activeNetId
+  if (store.activeNetId === netId) store.activeNetId = null;
+}
+
 export function networkId(opts, sessionId) {
   const host = opts?.server || 'session';
   const port = (opts?.ircPort ?? 0);

@@ -1,19 +1,22 @@
-let state = { sessionId: null, peer: null };
-const logEl   = document.getElementById('log');
-const profileEl = document.getElementById('profile');
-const btnSend = document.getElementById('send');
-const input   = document.getElementById('input');
-
-const lines = [];
-const textNode = document.createTextNode('');
-logEl.appendChild(textNode);
-
 import { api, events, EVT } from './lib/adapter.js';
 import { normalizeUser } from './protocol/index.js';
 
-let isFocused = document.hasFocus();
-window.addEventListener('focus', () => { isFocused = true; });
-window.addEventListener('blur',  () => { isFocused = false; });
+let state       = { sessionId: null, peer: null };
+let isFocused   = document.hasFocus();
+
+const logEl     = document.getElementById('log');
+const profileEl = document.getElementById('profile');
+const btnSend   = document.getElementById('send');
+const input     = document.getElementById('input');
+const textNode  = document.createTextNode('');
+const lines     = [];
+
+logEl.appendChild(textNode);
+
+const onFocus = () => { isFocused = true; };
+const onBlur  = () => { isFocused = false; };
+window.addEventListener('focus', onFocus);
+window.addEventListener('blur',  onBlur);
 
 try {
   // Filled by preload when opening the DM window (if available)
@@ -37,9 +40,8 @@ try {
 } catch {}
 
 // Play when main/canon signals a DM notify
-events.on(EVT.DM_NOTIFY, (p) => {
+const offNotify = events.on(EVT.DM_NOTIFY, (p) => {
   if (!p) return;
-  // Only notify for this window's conversation
   if (state.sessionId && p.sessionId && p.sessionId !== state.sessionId) return;
   if (state.peer && p.peer &&
       String(p.peer).toLowerCase() !== String(state.peer).toLowerCase()) return;
@@ -153,7 +155,7 @@ function renderProfile(u) {
 }
 
 // live updates: main will push user objects for our peer
-events.on(EVT.DM_USER, ({ sessionId, user } = {}) => {
+const offUser = events.on(EVT.DM_USER, ({ sessionId, user } = {}) => {
   if (!user) return;
 
   // Learn sessionId once
@@ -199,7 +201,7 @@ btnSend.addEventListener('click', sendNow);
 input.addEventListener('keydown', (e)=>{ if (e.key === 'Enter') sendNow(); });
 
 // receive routed DM lines (sent directly from main)
-events.on(EVT.DM_LINE, (p) => {
+const offLine = events.on(EVT.DM_LINE, (p) => {
   if (!p) return;
   // Learn sessionId on first line, then filter thereafter
   if (!state.sessionId && p.sessionId) state.sessionId = p.sessionId;
@@ -234,6 +236,15 @@ events.on(EVT.DM_LINE, (p) => {
   if (isPrivmsg && looksMinimized && state.sessionId && state.peer) {
     try { api.dm.notify(state.sessionId, state.peer); } catch {}
   }
+});
+
+// Ensure teardown when the DM window unloads
+window.addEventListener('beforeunload', () => {
+  try { window.removeEventListener('focus', onFocus); } catch {}
+  try { window.removeEventListener('blur', onBlur); } catch {}
+  try { offNotify?.(); } catch {}
+  try { offUser?.(); } catch {}
+  try { offLine?.(); } catch {}
 });
 
 renderProfile(null);

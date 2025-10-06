@@ -25,6 +25,7 @@ let _cachedOverlayPng = null
   Paths & Small Utilities
 ============================================================================= */
 const isWin = process.platform === 'win32';
+const MAX_USERS = 3000;
 
 function assetPath(...p) {
   const base = app.isPackaged ? process.resourcesPath : app.getAppPath();
@@ -54,6 +55,13 @@ function execFileP(cmd, args, opts = {}) {
       resolve({ stdout, stderr });
     });
   });
+}
+function putUser(key, val) {
+  userCache.set(key, val);
+  if (userCache.size > MAX_USERS) {
+    const first = userCache.keys().next().value;
+    userCache.delete(first);
+  }
 }
 function seedUnixPath(env) {
   if (process.platform === 'darwin' || process.platform === 'linux') {
@@ -396,7 +404,6 @@ function sendBootstrapLog(line) {
 }
 
 async function runBootstrap({ mode = 'terminal' } = {}) {
-  const isWin = process.platform === 'win32'; // ← make sure this exists
   const cwd   = app.isPackaged ? process.resourcesPath : app.getAppPath();
   const env   = { ...process.env, OPAMYES: '1' };
   // Make Homebrew/MacPorts visible when the app is launched from Finder
@@ -667,8 +674,6 @@ function buildMenu() {
             }
           }
         },
-        { role: 'toggleDevTools', accelerator: isMac ? 'Alt+Command+I' : 'Ctrl+Shift+I' },
-        { role: 'toggleDevTools', accelerator: isMac ? 'Alt+Command+I' : 'F12' },
         { type: 'separator' },
         { role: 'togglefullscreen' }
       ]
@@ -786,7 +791,7 @@ function setupIPC() {
     if (!nick) return;
 
     // cache latest user for quick replies
-    userCache.set(dmKey(sessionId, nick), { ...user });
+    putUser(dmKey(sessionId, nick), { ...user });
 
     // deliver to any DM window whose peer matches this nick (case-insensitive) in this session
     for (const [key, win] of dmWindows.entries()) {
@@ -815,7 +820,7 @@ function createInstallerWindow() {
   installerWin = new BrowserWindow({
     width: 880,
     height: 670,
-    title: 'Omni Chat – First-time Setup',
+    title: 'Omni Chat | First-time Setup',
     resizable: true,
     webPreferences: {
       preload: path.join(app.getAppPath(), 'preload.cjs'),
