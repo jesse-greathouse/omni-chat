@@ -56,6 +56,29 @@ function execFileP(cmd, args, opts = {}) {
     });
   });
 }
+function wireEditAccelerators(win) {
+  win.webContents.on('before-input-event', (event, input) => {
+    if (input.type !== 'keyDown') return;
+    const mod = input.meta || input.control;
+    if (!mod) return;
+    const k = (input.key || '').toLowerCase();
+    if (k === 'c') { win.webContents.copy(); event.preventDefault(); }
+    else if (k === 'v') { win.webContents.paste(); event.preventDefault(); }
+    else if (k === 'x') { win.webContents.cut(); event.preventDefault(); }
+    else if (k === 'a') { win.webContents.selectAll(); event.preventDefault(); }
+  });
+}
+function enableContextMenu(win) {
+  win.webContents.on('context-menu', (_e, params) => {
+    const menu = Menu.buildFromTemplate([
+      { role: 'copy',  enabled: !!params.selectionText },
+      { role: 'paste', enabled: params.isEditable },
+      { type: 'separator' },
+      { role: 'selectAll' }
+    ]);
+    menu.popup({ window: win });
+  });
+}
 function putUser(key, val) {
   userCache.set(key, val);
   if (userCache.size > MAX_USERS) {
@@ -148,6 +171,10 @@ function createDMWindow(sessionId, peer, bootLine ) {
   }
 
   w.loadFile(path.join(app.getAppPath(), 'renderer', 'dm.html'));
+
+  wireEditAccelerators(w);
+  enableContextMenu(w);
+
   w.on('closed', () => dmWindows.delete(key));
   const bootBuffer = [];
   if (bootLine) bootBuffer.push({ sessionId, peer, ...bootLine });
@@ -644,6 +671,9 @@ function createWindow() {
     }
   });
   mainWin.loadFile('index.html');
+
+  wireEditAccelerators(mainWin);
+  enableContextMenu(mainWin);
 }
 
 function buildMenu() {
@@ -654,6 +684,16 @@ function buildMenu() {
       label: app.name,
       submenu: [{ role: 'about' }, { type: 'separator' }, { role: 'hide' }, { role: 'hideOthers' }, { role: 'unhide' }, { type: 'separator' }, { role: 'quit' }]
     }] : []),
+
+    {
+      label: 'Edit',
+      submenu: [
+        { role: 'undo' }, { role: 'redo' }, { type: 'separator' },
+        { role: 'cut' }, { role: 'copy' }, { role: 'paste' }, { role: 'pasteAndMatchStyle' },
+        { role: 'delete' }, { role: 'selectAll' },
+        ...(isMac ? [{ type: 'separator' }, { label: 'Speech', submenu: [{ role: 'startSpeaking' }, { role: 'stopSpeaking' }] }] : [])
+      ]
+    },
 
     {
       label: 'View',
