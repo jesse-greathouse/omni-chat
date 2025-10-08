@@ -1,6 +1,7 @@
 import { Pane } from './base/Pane.js';
 import { Composer } from './widgets/Composer.js';
 import { TranscriptView } from './widgets/TranscriptView.js';
+import { PERF } from '../config/perf.js';
 import { api } from '../lib/adapter.js';
 
 export class PrivmsgPane extends Pane {
@@ -12,7 +13,12 @@ export class PrivmsgPane extends Pane {
 
     this.root.classList.add('console-pane');
 
-    this.view = new TranscriptView({ withTopic: false });
+    this.view = new TranscriptView({
+      withTopic: false,
+      maxLines: PERF.TRANSCRIPT_MAX_LINES,
+      pruneChunk: PERF.TRANSCRIPT_PRUNE_CHUNK,
+    });
+
     this.composer = new Composer({
       placeholder: `Message ${this.peer}`,
       onSubmit: (text) => {

@@ -202,7 +202,7 @@ export function createProfilesPanel({ onConnect }) {
           </select>
         </div>
         <div class="form-row" id="eAuthUserRow" style="display:none;">
-          <label>Username</label><input id="eAuthUser" type="text" placeholder="SASL only — leave empty to inherit"/>
+          <label>Username</label><input id="eAuthUser" type="text" placeholder="SASL only - leave empty to inherit"/>
         </div>
         <div class="form-row" id="eAuthPassRow" style="display:none;">
           <label>Password</label><input id="eAuthPass" type="password" placeholder="leave empty to inherit"/>
