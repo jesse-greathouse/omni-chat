@@ -1,6 +1,7 @@
 import { Pane } from './base/Pane.js';
 import { Composer } from './widgets/Composer.js';
 import { TranscriptView } from './widgets/TranscriptView.js';
+import { PERF } from '../config/perf.js';
 import { el } from '../lib/dom.js';
 import { api } from '../lib/adapter.js';
 
@@ -12,7 +13,12 @@ export class ChannelPane extends Pane {
 
     this.root.classList.add('chan-pane', 'pane--with-composer');
 
-    this.view = new TranscriptView({ withTopic: true });
+    this.view = new TranscriptView({
+      withTopic: true,
+      maxLines: PERF.TRANSCRIPT_MAX_LINES,
+      pruneChunk: PERF.TRANSCRIPT_PRUNE_CHUNK,
+    });
+
     this.view.element.classList.add('transcript--with-divider');
 
     this.usersEl = el('div', { className: 'users' });

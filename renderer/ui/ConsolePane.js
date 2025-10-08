@@ -1,6 +1,7 @@
 import { Pane } from './base/Pane.js';
 import { Composer } from './widgets/Composer.js';
 import { TranscriptView } from './widgets/TranscriptView.js';
+import { PERF } from '../config/perf.js';
 import { api } from '../lib/adapter.js';
 
 export class ConsolePane extends Pane {
@@ -9,7 +10,12 @@ export class ConsolePane extends Pane {
     this.net = net;
 
     // Structure: [Transcript] + [Composer]
-    this.view = new TranscriptView({ withTopic: false });
+    this.view = new TranscriptView({
+      withTopic: false,
+      maxLines: PERF.TRANSCRIPT_MAX_LINES,
+      pruneChunk: PERF.TRANSCRIPT_PRUNE_CHUNK,
+    });
+
     this.composer = new Composer({
       placeholder: 'Type a command or message...',
       onSubmit: (text) => {

@@ -1,4 +1,5 @@
 import { api, events, EVT } from '../lib/adapter.js';
+import { PERF } from '../config/perf.js';
 
 export class ChannelListPane {
   constructor(net) {
@@ -71,11 +72,24 @@ export class ChannelListPane {
     this.empty.hidden = true;
     this.wrap.appendChild(this.empty);
 
+    this._rafPending = false;
+    this._lastSnapshot = null;
     this._off = events.on(EVT.CHAN_SNAPSHOT, (payload) => {
       if (!payload || payload.sessionId !== this.net.sessionId) return;
-      this.items = Array.isArray(payload.items) ? payload.items : [];
-      this.render();
-      if (this.isLoading && this.items.length > 0) this.setLoading(false);
+      this._lastSnapshot = Array.isArray(payload.items) ? payload.items : [];
+      if (!this._rafPending && PERF.CHANLIST_RAF_RENDER) {
+        this._rafPending = true;
+        requestAnimationFrame(() => {
+          this._rafPending = false;
+          this.items = this._lastSnapshot;
+          this.render();
+          if (this.isLoading && this.items.length > 0) this.setLoading(false);
+        });
+      } else if (!PERF.CHANLIST_RAF_RENDER) {
+        this.items = this._lastSnapshot;
+        this.render();
+        if (this.isLoading && this.items.length > 0) this.setLoading(false);
+      }
     });
 
     // Incremental per-channel updates that should NOT reorder the table
@@ -111,7 +125,14 @@ export class ChannelListPane {
   }
 
   render() {
-    const rows = this.items.slice().sort((a, b) => (b.users - a.users) || a.name.localeCompare(b.name));
+    let rows = this.items.slice().sort((a, b) => (b.users - a.users) || a.name.localeCompare(b.name));
+    const total = rows.length;
+    if (PERF.CHANLIST_RENDER_CAP && rows.length > PERF.CHANLIST_RENDER_CAP) {
+      rows = rows.slice(0, PERF.CHANLIST_RENDER_CAP);
+      this.info.textContent = `Sorted by users (desc) - showing top ${rows.length} of ${total}`;
+    } else {
+      this.info.textContent = 'Sorted by users (desc)';
+    }
     // snapshot reconcile: reuse rows when possible; remove ones not present
     if (rows.length === 0) {
       this.empty.hidden = this.isLoading ? true : false;
