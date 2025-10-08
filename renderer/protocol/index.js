@@ -32,8 +32,12 @@ export function parseLine(line) {
     if (sp === -1) {
       return /** @type {IrcMsg} */ ({ raw, prefix: undefined, command: '', params: [] });
     }
+    // Guard: malformed line with only ':' prefix
+    if (sp === -1) {
+      return /** @type {IrcMsg} */ ({ raw, prefix: undefined, command: '', params: [] });
+    }
     prefix = parsePrefix(s.slice(1, sp));
-    // FIX: advance past the space; end index must be sp+1 (or use slice from start index only)
+    // advance *past* the space
     s = s.slice(sp + 1);
   }
 
@@ -74,7 +78,7 @@ export function isDMTarget(target, selfNick) {
   // target is *not* a channel and equals our nick (case/locale tolerant)
   if (!target) return false;
   if (isChannel(target)) return false;
-  if (!selfNick) return true; // best effort when we don't know yet
+  if (!selfNick) return false; // best effort when we don't know yet
   return String(target).localeCompare(selfNick, undefined, { sensitivity: 'accent' }) === 0;
 }
 export function isNickServ(nick) {
