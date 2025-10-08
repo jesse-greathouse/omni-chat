@@ -3,6 +3,7 @@ import { ChannelPane } from '../ui/ChannelPane.js';
 import { ConsolePane } from '../ui/ConsolePane.js';
 import { ChannelListPane } from '../ui/ChannelListPane.js';
 import { PrivmsgPane } from '../ui/PrivmsgPane.js';
+import { isChannel } from '../protocol/index.js';
 
 export const A = Object.freeze({
   NET_UPSERT: 'NET_UPSERT',
@@ -284,6 +285,11 @@ export function ensureConsole(net) {
 export function ensureChannel(net, name) {
   if (name === '__console__') return ensureConsole(net);
   if (name === '__chanlist__') return ensureChannelList(net);
+
+  if (!isChannel(name)) {
+    return ensureConsole(net);
+  }
+
   if (net.channels.has(name)) return net.channels.get(name);
 
   const citem = document.createElement('div');

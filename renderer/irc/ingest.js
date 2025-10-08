@@ -1,6 +1,6 @@
 import { reducers, dispatch, A, ensureChannel, appendToConsole, getNetworkBySessionId } from '../state/store.js';
 import { api, events, EVT } from '../lib/adapter.js';
-import { classify, normalizeChanlistItems, isNickServ } from '../protocol/index.js';
+import { classify, normalizeChanlistItems } from '../protocol/index.js';
 
 const K = Object.freeze({
   TYPE: {
@@ -37,16 +37,6 @@ function publishChanlistSnapshot(net) {
   events.emit(EVT.CHAN_SNAPSHOT, {
     sessionId: net.sessionId,
     items: Array.from(net.chanListTable.values()),
-  });
-}
-
-function publishChanUpdate(net, name) {
-  if (!name) return;
-  const rec = net.chanListTable.get(name);
-  if (!rec) return;
-  events.emit(EVT.CHAN_UPDATE, {
-    sessionId: net.sessionId,
-    channel: rec,
   });
 }
 
@@ -92,8 +82,12 @@ export class Ingestor {
       }
 
       if (c.type === 'dm') {
-        if (isNickServ(c.from)) { autoIdentifyIfNeeded(net); return; } // FIX: no duplication
-        api.dm.open(net.sessionId, c.from, { from: c.from, kind: c.kind, text: c.text }).catch(()=>{});
+        // If NickServ pings, attempt IDENTIFY once — but do not swallow the message.
+        if (c.isNickServ) autoIdentifyIfNeeded(net);
+
+        const payload = { from: c.from, kind: c.kind, text: c.text };
+        api.dm.open(net.sessionId, c.from, payload).catch(() => {});
+        try { api.dm.notify(net.sessionId, c.from); } catch {}
         return;
       }
 
