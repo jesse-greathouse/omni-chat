@@ -1,21 +1,18 @@
 import { ensureNetwork, activateNetwork, uiRefs, destroyNetwork } from './state/store.js';
 import { Ingestor } from './irc/ingest.js';
-import { ErrorDock } from './ui/ErrorDock.js';
 import { createProfilesPanel } from './ui/connectionForm.js';
 import { api, events, EVT } from './lib/adapter.js';
 import { el } from './lib/dom.js';
 
-uiRefs.viewsEl      = document.getElementById('views');
-uiRefs.errorDockEl  = document.getElementById('errorDock');
-uiRefs.toggleErrBtn = document.getElementById('toggleErrors');
+uiRefs.viewsEl = document.getElementById('views');
 
 const tabbarEl   = document.getElementById('tabbar');
-const errors     = new ErrorDock(uiRefs.errorDockEl, uiRefs.toggleErrBtn);
-window.addEventListener('error',  e => errors.append(`[renderer] ${e.message}`));
-window.addEventListener('unhandledrejection', e => errors.append(`[promise] ${e.reason?.message || e.reason}`));
+// Surface all window-level errors to DevTools console
+window.addEventListener('error',  (e) => console.error('[renderer error]', e.message, e.error ?? ''));
+window.addEventListener('unhandledrejection', (e) => console.error('[renderer unhandledrejection]', e.reason ?? ''));
 
 let activeSessionId = null;
-const ingestor = new Ingestor({ onError: (s) => errors.append(s) });
+const ingestor = new Ingestor({ onError: (s) => console.error('[ingest error]', s) });
 const tabs = new Map();
 
 function renderTabs() {
@@ -70,15 +67,15 @@ function closeTab(id) {
   const t = tabs.get(id);
   if (t) {
     // Stop backend (safe if not running)
-    try { api.sessions.stop(id); } catch {}
+    try { api.sessions.stop(id); } catch { console.error('[closeTab] stop error', e); }
 
     // Destroy the associated network UI/panes/timers/listeners if present
     if (t.netId) {
-      try { destroyNetwork(t.netId); } catch {}
+      try { destroyNetwork(t.netId); } catch (e) { console.error('[closeTab] destroyNetwork', e); }
     }
 
     // Remove the layer from the DOM
-    try { t.layerEl.remove(); } catch {}
+    try { t.layerEl.remove(); } catch (e) { console.error('[closeTab] remove layer', e); }
 
     tabs.delete(id);
   }
@@ -101,9 +98,7 @@ function mountProfilesPanel(layerEl) {
       // keep it visible until we know the connection succeeded.
       const t0 = tabs.get(activeSessionId);
       const hadExistingNet = !!t0?.netId;
-      if (hadExistingNet) {
-        try { panel.remove(); } catch {}
-      }
+      if (hadExistingNet) { try { panel.remove(); } catch (e) { console.error('[connect] remove overlay', e); } }
 
       // 1) create network view FIRST (prevents race)
       const t = tabs.get(activeSessionId);
@@ -117,14 +112,12 @@ function mountProfilesPanel(layerEl) {
       try {
         await api.sessions.start(activeSessionId, opts);
         // Success → remove the form in *all* cases so it doesn't overlay chat input.
-        try { panel.remove(); } catch {}
+        try { panel.remove(); } catch (e) { console.error('[connect] remove overlay after success', e); }
       } catch (e) {
-        errors.append(`start[${activeSessionId}]: ${e?.message || e}`);
+        console.error(`[session start failed][${activeSessionId}]`, e);
         // If we hid the overlay for an existing connection, put it back so the
         // user can retry. (In a new tab, the form was never removed.)
-        if (hadExistingNet) {
-          try { layerEl.prepend(panel); } catch {}
-        }
+        if (hadExistingNet) { try { layerEl.prepend(panel); } catch (err) { console.error('[connect] restore overlay', err); } }
       }
     }
   });
@@ -137,18 +130,18 @@ events.on(EVT.CONN_STATUS, ({ sessionId, status }) => {
 
 // Canonical bus: errors
 events.on(EVT.CONN_ERROR, ({ sessionId, message }) => {
-  if (tabs.has(sessionId)) errors.append(`[${sessionId}] ${message}`);
+  if (tabs.has(sessionId)) console.error('[conn:error]', sessionId, message);
 });
 
 // Canonical bus: raw line stream → Ingestor
 events.on(EVT.CONN_LINE, ({ sessionId, line }) => {
-  try { ingestor.ingest(line, sessionId); } catch {}
+  try { ingestor.ingest(line, sessionId); } catch (e) { console.error('[ingest exception]', e); }
 });
 
 
-// central UI error topic → dock
+// central UI error topic → console
 events.on(EVT.ERROR, ({ scope, message }) => {
-  errors.append(`[${scope}] ${message}`);
+  console.error('[ui:error]', scope, message);
 });
 
 openNewTab();

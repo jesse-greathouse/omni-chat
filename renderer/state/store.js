@@ -128,33 +128,35 @@ export function destroyNetwork(netId) {
 
   // Destroy embedded DM panes
   for (const [, rec] of net.dmWindows) {
-    try { rec.pane.destroy(); } catch {}
+    try { rec.pane.destroy(); }
+    catch (e) { console.error('[destroyNetwork] dm pane.destroy', e); }
   }
   net.dmWindows.clear();
 
   // Destroy channel panes
   for (const [, ch] of net.channels) {
-    try { ch.pane.destroy(); } catch {}
-    try { ch.itemEl.remove(); } catch {}
+    try { ch.pane.destroy(); } catch (e) { console.error('[destroyNetwork] channel pane.destroy', e); }
+    try { ch.itemEl.remove(); } catch (e) { console.error('[destroyNetwork] channel itemEl.remove', e); }
   }
   net.channels.clear();
 
   // Destroy console pane
   if (net.console) {
-    try { net.console.pane.destroy(); } catch {}
-    try { net.console.itemEl.remove(); } catch {}
+    try { net.console.pane.destroy(); } catch (e) { console.error('[destroyNetwork] console pane.destroy', e); }
+    try { net.console.itemEl.remove(); } catch (e) { console.error('[destroyNetwork] console itemEl.remove', e); }
     net.console = null;
   }
 
   // Destroy channel-list pane
   if (net.chanListTab) {
-    try { net.chanListTab.pane.destroy(); } catch {}
-    try { net.chanListTab.itemEl.remove(); } catch {}
+    try { net.chanListTab.pane.destroy(); } catch (e) { console.error('[destroyNetwork] chanList pane.destroy', e); }
+    try { net.chanListTab.itemEl.remove(); } catch (e) { console.error('[destroyNetwork] chanList itemEl.remove', e); }
     net.chanListTab = null;
   }
 
   // Remove the network view
-  try { net.viewEl.remove(); } catch {}
+  try { net.viewEl.remove(); }
+  catch (e) { console.error('[destroyNetwork] viewEl.remove', e); }
 
   // Clear data maps
   net.chanMap.clear();
@@ -244,7 +246,10 @@ export function ensureDMWindow(net, peerNick) {
 
 export function closeDMWindow(net, peerNick) {
   const rec = net.dmWindows.get(peerNick);
-  if (rec) { try { rec.pane.destroy(); } catch {} }
+  if (rec) {
+    try { rec.pane.destroy(); }
+    catch (e) { console.error('[closeDMWindow] pane.destroy', e); }
+  }
   net.dmWindows.delete(peerNick);
 }
 

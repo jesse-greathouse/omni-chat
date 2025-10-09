@@ -23,7 +23,10 @@ class Bus {
   emit(topic, payload) {
     const arr = this._m.get(String(topic));
     if (!arr) return;
-    for (const fn of arr.slice()) { try { fn(payload); } catch {} }
+    for (const fn of arr.slice()) {
+      try { fn(payload); }
+      catch (e) { console.error('[preload bus listener error]', topic, e); }
+    }
   }
 }
 const bus = new Bus();
@@ -48,12 +51,15 @@ const EVT = {
   Helpers
 --------------------------------------------------- */
 const once = (ch, fn) => {
-  const h = (_e, payload) => { try { fn(payload); } finally { ipcRenderer.removeListener(ch, h); } };
+  const h = (_e, payload) => {
+    try { fn(payload); } catch (e) { console.error('[preload once handler]', ch, e); }
+    finally { ipcRenderer.removeListener(ch, h); }
+  };
   ipcRenderer.on(ch, h);
   return () => ipcRenderer.removeListener(ch, h);
 };
 const on = (ch, fn) => {
-  const h = (_e, payload) => { try { fn(payload); } catch {} };
+  const h = (_e, payload) => { try { fn(payload); } catch (e) { console.error('[preload on handler]', ch, e); } };
   ipcRenderer.on(ch, h);
   return () => ipcRenderer.removeListener(ch, h);
 };
@@ -112,7 +118,8 @@ ipcRenderer.on('dm:init', (_e, { sessionId, peer, bootLines } = {}) => {
   // Fan any bootLines into our standard DM_LINE stream so the renderer code sees them consistently.
   if (Array.isArray(bootLines)) {
     for (const l of bootLines) {
-      bus.emit(EVT.DM_LINE, { sessionId, ...l });
+      try { bus.emit(EVT.DM_LINE, { sessionId, ...l }); }
+      catch (e) { console.error('[preload dm:init bootline]', e); }
     }
   }
 });
@@ -134,7 +141,9 @@ function bootstrapOn(kind, fn) {
 function bootstrapEmit(kind, payload) {
   const set = bootstrapListeners[kind];
   if (!set) return;
-  for (const fn of Array.from(set)) { try { fn(payload); } catch {} }
+  for (const fn of Array.from(set)) {
+    try { fn(payload); } catch (e) { console.error('[preload bootstrap listener]', kind, e); }
+  }
 }
 
 /*--------------------------------------------------

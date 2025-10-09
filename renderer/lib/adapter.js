@@ -18,7 +18,10 @@ class Bus {
   emit(topic, payload) {
     const arr = this._m.get(String(topic));
     if (!arr) return;
-    for (const fn of arr.slice()) { try { fn(payload); } catch {} }
+    for (const fn of arr.slice()) {
+      try { fn(payload); }
+      catch (e) { console.error('[adapter bus listener]', String(topic), e); }
+    }
   }
 }
 

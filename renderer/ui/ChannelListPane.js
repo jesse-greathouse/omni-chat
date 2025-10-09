@@ -210,9 +210,10 @@ export class ChannelListPane {
   }
 
   destroy() {
-    try { this._off?.(); } catch {}
-    try { this._offUpdate?.(); } catch {}
-    try { this.refreshBtn?.removeEventListener('click', this._boundRefresh); } catch {}
-    try { this.root?.remove(); } catch {}
+    try { this._off?.(); } catch (e) { console.error('ChannelListPane._off()', e); }
+    try { this._offUpdate?.(); } catch (e) { console.error('ChannelListPane._offUpdate()', e); }
+    try { this.refreshBtn?.removeEventListener('click', this._boundRefresh); } 
+    catch (e) { console.error('ChannelListPane.removeEventListener(click)', e); }
+    try { this.root?.remove(); } catch (e) { console.error('ChannelListPane.root.remove()', e); }
   }
 }

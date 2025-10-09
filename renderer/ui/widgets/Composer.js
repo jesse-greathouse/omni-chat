@@ -26,7 +26,13 @@ export class Composer {
   }
 
   setPlaceholder(s) { this.input.placeholder = String(s || ''); }
-  focus() { try { this.input.focus(); } catch {} }
+  focus() {
+    try {
+      this.input.focus();
+    } catch (e) {
+      console.warn('[Composer.focus] Failed to gain focus', e);
+    }
+  }
   disable(v = true) {
     this.input.disabled = !!v;
     this.btn.disabled = !!v;

@@ -31,9 +31,9 @@
 
   // Use the handles so they aren't "unused"
   window.addEventListener('beforeunload', () => {
-    try { offLog?.(); } catch {}
-    try { offDone?.(); } catch {}
-    try { offErr?.(); } catch {}
+    try { offLog?.(); }  catch (e) { console.error('offLog()', e); }
+    try { offDone?.(); } catch (e) { console.error('offDone()', e); }
+    try { offErr?.(); }  catch (e) { console.error('offErr()', e); }
   });
 
   btnRun.addEventListener('click', () => {

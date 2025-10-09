@@ -10,7 +10,8 @@ export function createDisposables() {
   const on = (target, type, handler, opts) => {
     target.addEventListener(type, handler, opts);
     return add(() => {
-      try { target.removeEventListener(type, handler, opts); } catch {}
+      try { target.removeEventListener(type, handler, opts); }
+      catch (e) { console.warn('[disposables] removeEventListener', type, e); }
     });
   };
 
@@ -27,7 +28,8 @@ export function createDisposables() {
   const dispose = () => {
     while (bag.length) {
       const fn = bag.pop();
-      try { fn(); } catch {}
+      try { fn(); }
+      catch (e) { console.warn('[disposables] dispose item failed', e); }
     }
   };
 

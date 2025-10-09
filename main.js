@@ -19,7 +19,7 @@ let installerWin = null;
 let tray = null;
 let bootstrapChild = null;
 let bootstrapLogPath = null;
-let _cachedOverlayPng = null
+let _cachedOverlayPng = null;
 
 /* =============================================================================
   Paths & Small Utilities
@@ -46,7 +46,7 @@ function killChild(child) {
   try {
     if (isWin) spawn('taskkill', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true });
     else child.kill('SIGTERM');
-  } catch {}
+  } catch (e) { console.error('[killChild]', e); }
 }
 function execFileP(cmd, args, opts = {}) {
   return new Promise((resolve, reject) => {
@@ -140,9 +140,8 @@ function createDMWindow(sessionId, peer, bootLine ) {
   if (existing && !existing.isDestroyed()) {
     // Keep minimized / background state intact; just deliver the line.
     if (bootLine) {
-      try {
-        existing.webContents.send('dm:line', { sessionId, peer, ...bootLine });
-      } catch {}
+      try { existing.webContents.send('dm:line', { sessionId, peer, ...bootLine }); }
+      catch (e) { console.error('[dm existing send boot line]', e); }
     }
     return existing;
   } else if (existing?.isDestroyed()) {
@@ -165,9 +164,10 @@ function createDMWindow(sessionId, peer, bootLine ) {
       nodeIntegration: false
     }
   });
-  
+
   if (process.platform === 'win32') {
-    try { w.setAppDetails({ appId: dmAppId(sessionId, peer) }); } catch {}
+    try { w.setAppDetails({ appId: dmAppId(sessionId, peer) }); }
+    catch (e) { console.error('[dm setAppDetails]', e); }
   }
 
   w.loadFile(path.join(app.getAppPath(), 'renderer', 'dm.html'));
@@ -190,10 +190,8 @@ function createDMWindow(sessionId, peer, bootLine ) {
 
       // If we already know WHOIS/user info for this peer, deliver it now
       const cached = userCache.get(dmKey(sessionId, peer));
-      if (cached) {
-        w.webContents.send('dm:user', { sessionId, user: cached });
-      }
-    } catch {}
+      if (cached) { w.webContents.send('dm:user', { sessionId, user: cached }); }
+    } catch (e) { console.error('[dm did-finish-load init]', e); }
   });
   dmWindows.set(key, w);
   return w;
@@ -294,7 +292,8 @@ function canonicalSessionKey(opts) {
 function deriveUnixSocketPath(sessionKey) {
   const base = process.env.XDG_RUNTIME_DIR || os.tmpdir();
   const dir = path.join(base, 'omni-chat');
-  try { fs.mkdirSync(dir, { recursive: true, mode: 0o700 }); } catch {}
+  try { fs.mkdirSync(dir, { recursive: true, mode: 0o700 }); }
+  catch (e) { console.warn('[deriveUnixSocketPath mkdirSync]', e); }
   const hash = createHash('sha1').update(sessionKey).digest('hex').slice(0, 16);
   return path.join(dir, `oi-${hash}.sock`);
 }
@@ -305,10 +304,17 @@ async function ensureUnixSocketFree(sockPath) {
     let settled = false;
     c.once('connect', () => { settled = true; c.destroy(); resolve(true); });
     c.once('error',  () => { if (!settled) resolve(false); });
-    setTimeout(() => { if (!settled) { try { c.destroy(); } catch {} resolve(false); } }, 250);
+    setTimeout(() => {
+      if (!settled) {
+        try { c.destroy(); }
+        catch (e) { console.warn('[ensureUnixSocketFree destroy timeout]', e); }
+        resolve(false);
+      }
+    }, 250);
   });
   if (ok) throw new Error(`A session for this nick/server is already active (socket: ${sockPath}).`);
-  try { fs.unlinkSync(sockPath); } catch {}
+  try { fs.unlinkSync(sockPath); }
+  catch (e) { console.error('[ensureUnixSocketFree unlink]', e); }
 }
 async function getFreePort() {
   return new Promise((resolve, reject) => {
@@ -330,7 +336,7 @@ async function resolveOmniIrcClientPath(env) {
   try {
     const guess = path.resolve(app.getAppPath(), '..', 'omni-irc', '_build', 'install', 'default', 'bin', exeName);
     if (fs.existsSync(guess)) return guess;
-  } catch {}
+  } catch (e) { console.warn('[resolveOmniIrcClientPath guess]', e); }
 
   // direct switch bin: $OPAMROOT/$OPAMSWITCH/bin
   const root = env.OPAMROOT || path.join(os.homedir(), '.opam');
@@ -347,7 +353,7 @@ async function resolveOmniIrcClientPath(env) {
       const p = path.join(stdout.trim(), exeName);
       if (fs.existsSync(p)) return p;
     }
-  } catch {}
+  } catch (e) { console.warn('[resolveOmniIrcClientPath opam var bin]', e); }
 
   // fall back to PATH (spawn will succeed if PATH is seeded)
   return exeName;
@@ -369,7 +375,8 @@ async function ensureClientBinary() {
       stdout.split(/\r?\n/).forEach(line => { const m = /^\s*export\s+([^=]+)=(["']?)(.*)\2\s*;?\s*$/.exec(line); if (m) next[m[1]] = m[3]; });
     }
     env = next;
-  } catch {
+  } catch (e) {
+    console.warn('[ensureClientBinary] opam env failed; falling back', e);
     // Make sure the switch bin is on PATH even without opam
     const root = env.OPAMROOT || path.join(os.homedir(), '.opam');
     const sw   = 'omni-irc-dev';
@@ -382,6 +389,7 @@ async function ensureClientBinary() {
   const exe = await resolveOmniIrcClientPath(env);
   return { env, exe };
 }
+
 async function backendReady() {
   try {
     const { env, exe } = await ensureClientBinary();
@@ -389,7 +397,8 @@ async function backendReady() {
     if (res.status === 0) return true;
     const s = (res.stdout || '') + (res.stderr || '');
     return /omni-irc/i.test(s); // some builds only print on stderr
-  } catch {
+  } catch (e) {
+    console.error('[backendReady] version probe', e);
     return false;
   }
 }
@@ -405,7 +414,7 @@ function pickPwsh() {
         const first = String(out.stdout || '').split(/\r?\n/).find(Boolean);
         if (first && fs.existsSync(first.trim())) return first.trim();
       }
-    } catch {}
+    } catch (e) { console.warn('[pickPwsh where]', e); }
     return null;
   };
   return tryWhere('pwsh.exe') || tryWhere('powershell.exe') || 'powershell.exe';
@@ -426,7 +435,8 @@ function findTerminalOnLinux(cwd, script) {
 }
 function sendBootstrapLog(line) {
   const text = typeof line === 'string' ? line : String(line);
-  try { if (bootstrapLogPath) fs.appendFileSync(bootstrapLogPath, text); } catch {}
+  try { if (bootstrapLogPath) fs.appendFileSync(bootstrapLogPath, text); }
+  catch (e) { console.warn('[sendBootstrapLog appendFileSync]', e); }
   sendToAll('bootstrap:log', text);
 }
 
@@ -451,7 +461,10 @@ async function runBootstrap({ mode = 'terminal' } = {}) {
     sendBootstrapLog(`✘ ${name} not found at ${script}\n`);
     throw new Error(`${name} missing`);
   }
-  if (!isWin) { try { fs.chmodSync(script, 0o755); } catch {} }
+  if (!isWin) {
+    try { fs.chmodSync(script, 0o755); }
+    catch (e) { console.error('[bootstrap chmod]', e); }
+  }
 
   if (mode === 'terminal') {
     if (isWin) {
@@ -489,11 +502,15 @@ echo
 echo "*** Omni-IRC bootstrap finished. Press Return to close... ***"
 read -r _
 `;
-      try { fs.writeFileSync(tmpCmd, tailScript, { mode: 0o755 }); } catch {}
+      try { fs.writeFileSync(tmpCmd, tailScript, { mode: 0o755 }); }
+      catch (e) { console.error('[bootstrap tmp write]', e); }
       const child = spawn('open', ['-a', 'Terminal', tmpCmd], { detached: true, stdio: 'ignore' });
       child.unref();
       // Best-effort cleanup
-      setTimeout(() => { try { fs.unlinkSync(tmpCmd); } catch {} }, 10 * 60 * 1000);
+      setTimeout(() => {
+        try { fs.unlinkSync(tmpCmd); }
+        catch (e) { console.error('[bootstrap tmp cleanup]', e); }
+      }, 10 * 60 * 1000);
       return true;
     }
 
@@ -505,15 +522,19 @@ read -r _
     return true;
   }
 
-  // --- background mode (unchanged) ---
-  if (bootstrapChild && !bootstrapChild.killed) { try { bootstrapChild.kill(); } catch {} bootstrapChild = null; }
+  // --- background mode ---
+  if (bootstrapChild && !bootstrapChild.killed) {
+    try { bootstrapChild.kill(); }
+    catch (e) { console.warn('[bootstrap kill previous]', e); }
+    bootstrapChild = null;
+  }
   // Fresh log every run
   bootstrapLogPath = path.join(app.getPath('userData'), 'bootstrap.log');
   try {
     fs.mkdirSync(path.dirname(bootstrapLogPath), { recursive: true });
     // Truncate + header
     fs.writeFileSync(bootstrapLogPath, `# Omni-IRC bootstrap log -- ${new Date().toISOString()}\n`);
-  } catch {}
+  } catch (e) { console.error('[bootstrap prepare log]', e); }
 
   if (isWin) {
     const pwsh = pickPwsh();
@@ -529,28 +550,36 @@ read -r _
   sendBootstrapLog('[bootstrap] spawned\n');
   // Pipe all output to the log file and to the UI stream.
   const logStream = (() => {
-    try { return fs.createWriteStream(bootstrapLogPath, { flags: 'a' }); } catch { return null; }
+    try { return fs.createWriteStream(bootstrapLogPath, { flags: 'a' }); }
+    catch (e) { console.warn('[bootstrap createWriteStream]', e); return null; }
   })();
   const pipeChunk = (buf) => {
     const s = String(buf);
-    if (logStream) { try { logStream.write(s); } catch {} }
+    if (logStream) {
+      try { logStream.write(s); }
+      catch (e) { console.warn('[bootstrap logStream.write]', e); }
+    }
     sendToAll('bootstrap:log', s);
   };
   bootstrapChild.stdout?.setEncoding('utf8');
   bootstrapChild.stderr?.setEncoding('utf8');
   bootstrapChild.stdout?.on('data', pipeChunk);
   bootstrapChild.stderr?.on('data', pipeChunk);
-  bootstrapChild.on('error', (err) => { sendBootstrapLog(`\n✘ Failed to start bootstrap: ${err.message}\n`); sendToAll('bootstrap:error', -1); });
+  bootstrapChild.on('error', (err) => {
+    console.error('[bootstrap spawn error]', err);
+    sendBootstrapLog(`\n✘ Failed to start bootstrap: ${err.message}\n`);
+    sendToAll('bootstrap:error', -1);
+  });
   bootstrapChild.on('close', (code) => {
     if (code === 0) { sendBootstrapLog('\n✔ bootstrap completed successfully\n'); sendToAll('bootstrap:done'); }
     else { sendBootstrapLog(`\n✘ bootstrap exited with code ${code}\n`); sendToAll('bootstrap:error', code ?? 1); }
     bootstrapChild = null;
-    try { logStream?.end(); } catch {}
+    try { logStream?.end(); }
+    catch (e) { console.warn('[bootstrap logStream.end]', e); }
   });
 
   return true;
 }
-
 
 /* =============================================================================
   Session Manager
@@ -623,9 +652,12 @@ async function startSession(sessionId, opts) {
   sock.on('error', (err) => sendToAll('session:error', { id: sessionId, message: err.message }));
   child.on('close', (code) => {
     sendToAll('session:status', { id: sessionId, status: 'stopped', code });
-    try { rl?.close(); } catch {}
-    try { sock?.destroy(); } catch {}
-    if (unixSockPath) { try { fs.unlinkSync(unixSockPath); } catch {} }
+    try { rl?.close(); } catch (e) { console.error('[session child close rl]', e); }
+    try { sock?.destroy(); } catch (e) { console.error('[session child close sock]', e); }
+    if (unixSockPath) {
+      try { fs.unlinkSync(unixSockPath); }
+      catch (e) { console.error('[session cleanup sock]', e); }
+    }
     sessions.delete(sessionId);
   });
 
@@ -637,11 +669,14 @@ async function startSession(sessionId, opts) {
 async function stopSession(sessionId) {
   const s = sessions.get(sessionId);
   if (!s) return;
-  try { s.sock?.write('/quit\r\n'); } catch {}
-  try { s.rl?.close(); } catch {}
-  try { s.sock?.destroy(); } catch {}
+  try { s.sock?.write('/quit\r\n'); } catch (e) { console.error('[stopSession write /quit]', e); }
+  try { s.rl?.close(); } catch (e) { console.error('[stopSession rl close]', e); }
+  try { s.sock?.destroy(); } catch (e) { console.error('[stopSession sock destroy]', e); }
   killChild(s.child);
-  if (s.unixSockPath) { try { fs.unlinkSync(s.unixSockPath); } catch {} }
+  if (s.unixSockPath) {
+    try { fs.unlinkSync(s.unixSockPath); }
+    catch (e) { console.error('[stopSession unlink sock]', e); }
+  }
   sessions.delete(sessionId);
   sendToAll('session:status', { id: sessionId, status: 'stopped' });
 }
@@ -736,10 +771,11 @@ function setupTray() {
     if (isWin) return assetPath('build', 'icons', 'icon.ico');
     return assetPath('build', 'icons', 'png', 'icon.png');
   })();
+
   try {
     tray = new Tray(trayIconPath);
     tray.setToolTip('Omni Chat');
-  } catch {}
+  } catch (e) { console.error('[setupTray]', e); }
 }
 
 /* =============================================================================
@@ -750,7 +786,7 @@ function setupIPC() {
   ipcMain.handle('session:start', async (_e, id, opts) => startSession(id || genId(), opts));
   ipcMain.handle('session:stop',  async (_e, id)       => stopSession(id));
   ipcMain.handle('session:restart', async (_e, id, opts) => restartSession(id, opts));
-  
+
   ipcMain.on('session:send', (_e, { id, line }) => {
     const s = sessions.get(id);
     if (s && s.sock && !s.sock.destroyed) {
@@ -770,7 +806,8 @@ function setupIPC() {
   ipcMain.handle('bootstrap:openLogs',    async () => { await shell.openPath(app.getPath('userData')); return true; });
   ipcMain.on('bootstrap:proceed-if-ready', async () => {
     if (await backendReady()) {
-      try { installerWin?.close(); } catch {}
+      try { installerWin?.close(); }
+      catch (e) { console.error('[bootstrap proceed close installerWin]', e); }
       createWindow(); buildMenu(); setupTray();
     } else {
       sendToAll('bootstrap:log', 'Backend still not ready.\n');
@@ -789,7 +826,8 @@ function setupIPC() {
 
     // tell the renderer "a DM notify happened" (renderer plays sound)
     const cueNotify = () => {
-      try { w.webContents.send('dm:notify', { sessionId, peer }); } catch {}
+      try { w.webContents.send('dm:notify', { sessionId, peer }); }
+      catch (e) { console.error('[dm notify send]', e); }
     };
 
     if (w.webContents.isLoading()) w.webContents.once('did-finish-load', cueNotify);
@@ -799,7 +837,8 @@ function setupIPC() {
       const setOverlay = () => {
         const img = notificationBallPng();
         if (img) {
-          try { w.setOverlayIcon(img, ''); } catch {}
+          try { w.setOverlayIcon(img, ''); }
+          catch (e) { console.error('[dm overlay set]', e); }
         }
       };
 
@@ -811,12 +850,19 @@ function setupIPC() {
         w.once('ready-to-show', setOverlay);
       }
 
-      const clear = () => { try { w.setOverlayIcon(null, ''); } catch {} };
+      const clear = () => {
+        try { w.setOverlayIcon(null, ''); }
+        catch (e) { console.error('[dm overlay clear]', e); }
+      };
       w.once('focus',  clear);
       w.once('closed', clear);
     } else if (process.platform === 'darwin') {
-      try { app.dock?.setBadge?.('•'); } catch {}
-      const clear = () => { try { app.dock?.setBadge?.(''); } catch {} };
+      try { app.dock?.setBadge?.('•'); }
+      catch (e) { console.error('[dm dock badge set]', e); }
+      const clear = () => {
+        try { app.dock?.setBadge?.(''); }
+        catch (err) { console.error('[dm dock badge clear]', err); }
+      };
       w.once('focus', clear);
       w.once('closed', clear);
     } else {
@@ -838,7 +884,8 @@ function setupIPC() {
       if (!win || win.isDestroyed()) continue;
       const [sess, peerLower] = key.split(':');
       if (sess === String(sessionId) && peerLower === String(nick).toLowerCase()) {
-        try { win.webContents.send('dm:user', { sessionId, user }); } catch {}
+        try { win.webContents.send('dm:user', { sessionId, user }); }
+        catch (e) { console.error('[dm push-user send]', e); }
       }
     }
   });
@@ -848,7 +895,8 @@ function setupIPC() {
     const cached = userCache.get(dmKey(sessionId, nick));
     if (cached) {
       // reply only to the requesting DM window
-      try { evt.sender.send('dm:user', { sessionId, user: cached }); } catch {}
+      try { evt.sender.send('dm:user', { sessionId, user: cached }); }
+      catch (e) { console.error('[dm request-user reply]', e); }
     }
   });
 }
@@ -883,7 +931,10 @@ async function ensureBackendReadyAtStartup() {
 }
 
 app.whenReady().then(async () => {
-  if (isWin) { try { app.setAppUserModelId('com.omnichat.app'); } catch {} }
+  if (isWin) {
+    try { app.setAppUserModelId('com.omnichat.app'); }
+    catch (e) { console.error('[setAppUserModelId]', e); }
+  }
 
   const filter = { urls: ['file://*/*'] };
   session.defaultSession.webRequest.onHeadersReceived(filter, (details, callback) => {
@@ -911,6 +962,10 @@ app.whenReady().then(async () => {
 });
 
 app.on('before-quit', async () => {
-  await Promise.all([...sessions.keys()].map(id => stopSession(id).catch(()=>{})));
+  await Promise.all(
+    [...sessions.keys()].map(id =>
+      stopSession(id).catch((e) => { console.error('[before-quit stopSession]', e); })
+    )
+  );
 });
 app.on('window-all-closed', () => app.quit());

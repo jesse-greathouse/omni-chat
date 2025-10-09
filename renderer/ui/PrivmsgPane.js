@@ -22,7 +22,7 @@ export class PrivmsgPane extends Pane {
     this.composer = new Composer({
       placeholder: `Message ${this.peer}`,
       onSubmit: (text) => {
-        try { api.sessions.send(this.net.sessionId, `/msg ${this.peer} ${text}`); } catch {}
+        try { api.sessions.send(this.net.sessionId, `/msg ${this.peer} ${text}`); } catch (e) { console.error('[PrivmsgPane send]', e); }
         this.appendLine(`> ${text}`);
       }
     });

@@ -30,7 +30,8 @@ function autoIdentifyIfNeeded(net) {
   const cmd  = acct
     ? `/msg NickServ IDENTIFY ${acct} ${net.authPassword}`
     : `/msg NickServ IDENTIFY ${net.authPassword}`;
-  try { api.sessions.send(net.sessionId, cmd); } catch {}
+  try { api.sessions.send(net.sessionId, cmd); }
+  catch (e) { console.error('[ingest] autoIdentifyIfNeeded', e); }
 }
 
 function publishChanlistSnapshot(net) {
@@ -68,7 +69,11 @@ export class Ingestor {
         return;
       }
       if (line.startsWith('{') || line.startsWith('[')) {
-        try { this.#reconcile(JSON.parse(line), net); return; } catch {}
+        try { this.#reconcile(JSON.parse(line), net); return; }
+        catch (e) {
+          // Parse errors can be noisy; still surface for diagnosis.
+          console.error('[ingest] JSON parse failed', e, { sample: line.slice(0, 200) });
+        }
       }
 
       const c = classify(line, net.selfNick);
@@ -86,8 +91,12 @@ export class Ingestor {
         if (c.isNickServ) autoIdentifyIfNeeded(net);
 
         const payload = { from: c.from, kind: c.kind, text: c.text };
-        api.dm.open(net.sessionId, c.from, payload).catch(() => {});
-        try { api.dm.notify(net.sessionId, c.from); } catch {}
+        api.dm.open(net.sessionId, c.from, payload).catch((e) =>
+          console.error('[ingest] dm.open failed', e)
+        );
+        try { api.dm.notify(net.sessionId, c.from); }
+        catch (e) { console.error('[ingest] dm.notify failed', e); }
+
         return;
       }
 
@@ -151,7 +160,8 @@ export class Ingestor {
         const u = msg.user ?? msg.payload ?? msg.data;
         if (!u || typeof u !== 'object') break;
         events.emit(EVT.DM_USER, { sessionId: net.sessionId, user: u });
-        try { api.dm.pushUser?.(net.sessionId, u); } catch {}
+        try { api.dm.pushUser?.(net.sessionId, u); }
+        catch (e) { console.error('[ingest] pushUser (USER) failed', e); }
         reducers.applyDMUser(net.sessionId, u);
         break;
       }
@@ -161,7 +171,8 @@ export class Ingestor {
           reducers.applyDMUser(net.sessionId, msg.user);
           dispatch({ type: A.SELF_NICK, sessionId: net.sessionId, nick: msg.user.nick });
           events.emit(EVT.DM_USER, { sessionId: net.sessionId, user: msg.user });
-          try { api.dm.pushUser?.(net.sessionId, msg.user); } catch {}
+          try { api.dm.pushUser?.(net.sessionId, msg.user); }
+          catch (e) { console.error('[ingest] pushUser (CLIENT_USER) failed', e); }
           autoIdentifyIfNeeded(net); // FIX: no duplication
         }
         break;
@@ -171,7 +182,8 @@ export class Ingestor {
         const { old_nick, new_nick } = msg;
         if (old_nick && new_nick) {
           dispatch({ type: A.NICK_CHANGE, sessionId: net.sessionId, old_nick, new_nick });
-          try { api.dm.pushUser?.(net.sessionId, { nick: new_nick }); } catch {}
+          try { api.dm.pushUser?.(net.sessionId, { nick: new_nick }); }
+          catch (e) { console.error('[ingest] pushUser (NICK_CHANGE) failed', e); }
         }
         break;
       }

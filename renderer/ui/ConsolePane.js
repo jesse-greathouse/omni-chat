@@ -20,7 +20,7 @@ export class ConsolePane extends Pane {
       placeholder: 'Type a command or message...',
       onSubmit: (text) => {
         // Console sends verbatim to the backend
-        try { api.sessions.send(this.net.sessionId, text); } catch {}
+        try { api.sessions.send(this.net.sessionId, text); } catch (e) { console.error('[ConsolePane send]', e); }
         this.appendLine(`> ${text}`);
       }
     });

@@ -122,14 +122,26 @@ export class TranscriptBuffer {
 
     // Yield if input pending (keep UI snappy)
     if (navigator.scheduling?.isInputPending?.()) {
-      if (scheduler?.yield) try { await scheduler.yield(); } catch {}
+      if (scheduler?.yield) {
+        try { await scheduler.yield(); }
+        catch (e) { console.error('[TranscriptBuffer] scheduler.yield failed', e); }
+      }
     }
     // Apply a lightweight visual refresh
     this._scheduleFrame();
   }
 
   dispose() {
-    try { this.scrollEl.removeEventListener('scroll', this._onScroll, { passive: true }); } catch {}
-    this.clear();
+    try {
+      this.scrollEl.removeEventListener('scroll', this._onScroll, { passive: true });
+    } catch (e) {
+      console.error('[TranscriptBuffer] removeEventListener failed', e);
+    }
+
+    try {
+      this.clear();
+    } catch (e) {
+      console.error('[TranscriptBuffer] clear failed', e);
+    }
   }
 }

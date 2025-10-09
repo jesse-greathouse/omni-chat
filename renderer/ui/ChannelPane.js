@@ -29,7 +29,8 @@ export class ChannelPane extends Pane {
     this.composer = new Composer({
       placeholder: `Message ${this.name}`,
       onSubmit: (text) => {
-        try { api.sessions.send(this.net.sessionId, `/msg ${this.name} ${text}`); } catch {}
+        try { api.sessions.send(this.net.sessionId, `/msg ${this.name} ${text}`); }
+        catch (e) { console.error('[ChannelPane] send /msg failed', e); }
         this.appendLine(`> ${text}`);
       }
     });
@@ -45,7 +46,9 @@ export class ChannelPane extends Pane {
       try {
         api.dm.open(this.net.sessionId, nick);
         api.dm.requestUser?.(this.net.sessionId, nick);
-      } catch {}
+      } catch (e) {
+        console.error('[ChannelPane open DM]', e);
+      }
     });
 
     // Hover WHOIS (illustrative timer that must be cleaned on destroy)
@@ -62,7 +65,7 @@ export class ChannelPane extends Pane {
       hoverTimer = setTimeout(() => {
         hoverTimer = null;
         if (!this.net?.sessionId || !nick) return;
-        try { api.sessions.send(this.net.sessionId, `/whois ${nick} ${nick}`); } catch {}
+        try { api.sessions.send(this.net.sessionId, `/whois ${nick} ${nick}`); } catch (e) { console.error('[ChannelPane whois]', e); }
       }, 350);
     }, true);
 

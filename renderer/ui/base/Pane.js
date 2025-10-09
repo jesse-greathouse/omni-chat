@@ -32,8 +32,18 @@ export class Pane {
   }
 
   destroy() {
-    try { this.disposables?.dispose?.(); } catch {}
-    try { this.root.remove(); } catch {}
+    try {
+      this.disposables?.dispose?.();
+    } catch (e) {
+      console.error('[Pane] disposables.dispose failed', e);
+    }
+
+    try {
+      this.root.remove();
+    } catch (e) {
+      console.error('[Pane] root.remove failed', e);
+    }
+
     this._mounted = false;
   }
 }

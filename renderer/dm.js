@@ -26,10 +26,10 @@ try {
     document.title = String(state.peer);
     input.placeholder = `Message ${state.peer}`;
     // proactively fetch profile snapshot when we *know* the peer
-    try { api.dm.requestUser?.(state.sessionId, state.peer); } catch {}
+    try { api.dm.requestUser?.(state.sessionId, state.peer); } catch (e) { console.error('[dm] requestUser', e); }
     requestWhois();
   }
-} catch {}
+} catch (e) { console.error('[dm] preload current state', e); }
 
 // notification sound
 let ding = null;
@@ -37,7 +37,7 @@ try {
   ding = new Audio('../build/wav/notification.wav');
   ding.preload = 'auto';
   ding.addEventListener('error', e => console.error('ding load error', e));
-} catch {}
+} catch (e) { console.error('[dm] audio init', e); }
 
 // Play when main/canon signals a DM notify
 const offNotify = events.on(EVT.DM_NOTIFY, (p) => {
@@ -46,14 +46,27 @@ const offNotify = events.on(EVT.DM_NOTIFY, (p) => {
   if (state.peer && p.peer &&
       String(p.peer).toLowerCase() !== String(state.peer).toLowerCase()) return;
   if (!ding) return;
-  try { ding.currentTime = 0; } catch {}
-  ding.play?.().catch(()=>{});
+
+  try {
+    ding.currentTime = 0;
+  } catch (e) {
+    console.error('[dm notify] reset audio currentTime failed:', e);
+  }
+
+  try {
+    const maybePromise = ding.play?.();
+    if (maybePromise && typeof maybePromise.catch === 'function') {
+      maybePromise.catch((err) => console.error('[dm notify] play() failed:', err));
+    }
+  } catch (e) {
+    console.error('[dm notify] play() threw synchronously:', e);
+  }
 });
 
 function requestWhois() {
   if (!state.sessionId || !state.peer) return;
   // using "<nick> <nick>" often yields richer info (account, etc.)
-  try { api.sessions.send(state.sessionId, `/whois ${state.peer} ${state.peer}`); } catch {}
+  try { api.sessions.send(state.sessionId, `/whois ${state.peer} ${state.peer}`); } catch (e) { console.error('[dm] whois send', e); }
 }
 
 function append(s){
@@ -192,7 +205,13 @@ const offUser = events.on(EVT.DM_USER, ({ sessionId, user } = {}) => {
 function sendNow() {
   const t = input.value.trim();
   if (!t || !state.sessionId || !state.peer) return;
-  try { api.sessions.send(state.sessionId, `/msg ${state.peer} ${t}`); } catch {};
+
+  try {
+    api.sessions.send(state.sessionId, `/msg ${state.peer} ${t}`);
+  } catch (e) {
+    console.error('[dm sendNow] failed to send message:', e);
+  }
+
   append(`> ${t}`);
   input.value = '';
 }
@@ -215,7 +234,11 @@ const offLine = events.on(EVT.DM_LINE, (p) => {
       document.title = String(state.peer);
       input.placeholder = `Message ${state.peer}`;
       // now that we have a peer, ask for a snapshot so the header can populate
-      try { api.dm.requestUser?.(state.sessionId, state.peer); } catch {}
+      try {
+        api.dm.requestUser?.(state.sessionId, state.peer);
+      } catch (e) {
+        console.error('[dm line] requestUser failed:', e);
+      }
       requestWhois();
     }
   }
@@ -226,25 +249,29 @@ const offLine = events.on(EVT.DM_LINE, (p) => {
     const want = String(state.peer).toLowerCase();
     if (got !== want) return;
   }
+
   append(`${p.from}${p.kind === 'NOTICE' ? ' (NOTICE)' : ''}: ${p.text}`);
 
   // If this is a *new* PRIVMSG for this DM and the window isn't visible/focused,
   // trigger a DM notification (tray/badge/sound via main).
-  // "Minimized" maps to document.hidden || !isFocused in the renderer.
   const isPrivmsg = (p.kind || '').toUpperCase() === 'PRIVMSG' || !p.kind; // be tolerant
   const looksMinimized = document.hidden || !isFocused;
   if (isPrivmsg && looksMinimized && state.sessionId && state.peer) {
-    try { api.dm.notify(state.sessionId, state.peer); } catch {}
+    try {
+      api.dm.notify(state.sessionId, state.peer);
+    } catch (e) {
+      console.error('[dm line] notify failed:', e);
+    }
   }
 });
 
 // Ensure teardown when the DM window unloads
 window.addEventListener('beforeunload', () => {
-  try { window.removeEventListener('focus', onFocus); } catch {}
-  try { window.removeEventListener('blur', onBlur); } catch {}
-  try { offNotify?.(); } catch {}
-  try { offUser?.(); } catch {}
-  try { offLine?.(); } catch {}
+  try { window.removeEventListener('focus', onFocus); } catch (e) { console.error('[dm] rm focus', e); }
+  try { window.removeEventListener('blur', onBlur); } catch (e) { console.error('[dm] rm blur', e); }
+  try { offNotify?.(); } catch (e) { console.error('[dm] off notify', e); }
+  try { offUser?.(); } catch (e) { console.error('[dm] off user', e); }
+  try { offLine?.(); } catch (e) { console.error('[dm] off line', e); }
 });
 
 renderProfile(null);
