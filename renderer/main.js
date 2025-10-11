@@ -3,6 +3,7 @@ import { Ingestor } from './irc/ingest.js';
 import { createProfilesPanel } from './ui/connectionForm.js';
 import { api, events, EVT } from './lib/adapter.js';
 import { el } from './lib/dom.js';
+import { canonicalizeConnOptions } from './config/defaults.js';
 
 uiRefs.viewsEl = document.getElementById('views');
 
@@ -92,7 +93,9 @@ function closeTab(id) {
 function mountProfilesPanel(layerEl) {
   layerEl.innerHTML = '';
   const panel = createProfilesPanel({
-    onConnect: async (opts) => {
+    onConnect: async (_opts) => {
+      const opts = canonicalizeConnOptions(_opts);
+
       // If this form is an overlay on an *existing* connection tab, remove it
       // right away so it can't block inputs underneath. In a brand-new tab,
       // keep it visible until we know the connection succeeded.
