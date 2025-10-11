@@ -7,6 +7,7 @@ import net from 'node:net';
 import { randomBytes, createHash } from 'node:crypto';
 import readline from 'node:readline';
 import { spawn, execFile, spawnSync } from 'node:child_process';
+import { DEFAULTS, defaultPort, canonicalizeConnOptions } from './renderer/config/defaults.js';
 
 /* =============================================================================
   Globals
@@ -206,7 +207,12 @@ const settings = new Store({
     ui: { footerGap: 6 },
     globals: { nick: 'guest', realname: 'Guest', authType: 'none', authUsername: null, authPassword: null },
     servers: {
-      'irc.libera.chat': { host: 'irc.libera.chat', port: 6697, tls: true, nick: null, realname: null, authType: null, authUsername: null, authPassword: null }
+      'irc.libera.chat': {
+        host: 'irc.libera.chat',
+        port: DEFAULTS.IRC.PORT_TLS,
+        tls: true,
+        nick: null, realname: null, authType: null, authUsername: null, authPassword: null
+      }
     }
   }
 });
@@ -234,11 +240,13 @@ function getGlobals() {
 function resolveServerProfile(host) {
   const servers = getServers();
   const g = getGlobals();
-  const p = servers[host] || { host, port: 6697, tls: true, nick: null, realname: null };
+  const p = servers[host] || { host, port: defaultPort(true), tls: true, nick: null, realname: null };
+  const tls = (p.tls !== false);
+  const port = Number(p.port ?? defaultPort(tls));
   return {
     host: p.host ?? host,
-    port: Number(p.port ?? 6697),
-    tls:  Boolean(p.tls !== false),
+    port,
+    tls,
     nick: (p.nick == null || p.nick === '') ? g.nick : p.nick,
     realname: (p.realname == null || p.realname === '') ? g.realname : p.realname,
     authType: (p.authType == null || p.authType === '') ? (g.authType || 'none') : p.authType,
@@ -256,13 +264,17 @@ ipcMain.handle('profiles:upsert', (_e, host, profile) => {
   host = String(host || '').trim();
   if (!host) throw new Error('host required');
   const servers = getServers();
-  const existing = servers[host] || { host, port: 6697, tls: true, nick: null, realname: null };
+  const existing = servers[host] || { host, port: defaultPort(true), tls: true, nick: null, realname: null };
+
+  const nextTls = (profile?.tls ?? existing.tls ?? true) !== false;
+  const nextPort = Number(profile?.port ?? existing.port ?? defaultPort(nextTls));
+
   servers[host] = {
     host,
-    port: Number(profile?.port ?? existing.port ?? 6697),
-    tls:  Boolean(profile?.tls ?? existing.tls ?? true),
-    nick: (profile?.nick === undefined ? existing.nick : profile.nick ?? null),
-    realname: (profile?.realname === undefined ? existing.realname : profile.realname ?? null),
+    port: nextPort,
+    tls: nextTls,
+    nick: (profile?.nick === undefined ? existing.nick : (profile.nick ?? null)),
+    realname: (profile?.realname === undefined ? existing.realname : (profile.realname ?? null)),
     authType: (profile?.authType === undefined ? existing.authType : (profile.authType ?? null)),
     authUsername: (profile?.authUsername === undefined ? existing.authUsername : (profile.authUsername ?? null)),
     authPassword: (profile?.authPassword === undefined ? existing.authPassword : (profile.authPassword ?? null)),
@@ -283,10 +295,11 @@ ipcMain.handle('profiles:resolve', (_e, host) => resolveServerProfile(String(hos
   Backend Discovery (opam env + omni client)
 ============================================================================= */
 function canonicalSessionKey(opts) {
-  const nick = String(opts.nick || '').trim().toLowerCase();
-  const host = String(opts.server || '').trim().toLowerCase();
-  const port = String(opts.ircPort || '');
-  const proto = opts.tls ? 'tls' : 'tcp';
+  const o = canonicalizeConnOptions(opts);
+  const nick = String(o.nick || '').trim().toLowerCase();
+  const host = String(o.server || '').trim().toLowerCase();
+  const port = String(o.ircPort || '');
+  const proto = o.tls ? 'tls' : 'tcp';
   return `${nick}@${host}:${port}/${proto}`;
 }
 function deriveUnixSocketPath(sessionKey) {
@@ -586,20 +599,28 @@ read -r _
 ============================================================================= */
 async function startSession(sessionId, opts) {
   const { env, exe } = await ensureClientBinary();
-  const sessionKey = canonicalSessionKey(opts);
 
-  // Only prevent duplicates on Unix (Windows loopback allows multiple)
+  // Canonicalize once and use *only* this object afterward.
+  const o = canonicalizeConnOptions(opts);
+  const sessionKey = canonicalSessionKey(o); // use canonicalized
+
+  // Prevent duplicate sessions on Unix only
   if (!isWin) {
     for (const s of sessions.values()) {
-      if (s.sessionKey === sessionKey) throw new Error(`Already connected as ${sessionKey}`);
+      if (s.sessionKey === sessionKey) {
+        throw new Error(`Already connected as ${sessionKey}`);
+      }
     }
   }
 
-  // Base CLI args
-  const args = ['--server', opts.server, '--port', String(opts.ircPort), '--nick', opts.nick, '--realname', opts.realname];
-  if (opts.tls) args.push('--tls');
-  if (opts.tls && String(opts.ircPort) === '6667') args[args.indexOf('--port') + 1] = '6697';
-  if (!opts.tls && String(opts.ircPort) === '6697') args.push('--tls');
+  // Base CLI args — no more ad-hoc flip/flop logic
+  const args = [
+    '--server', String(o.server),
+    '--port',   String(o.ircPort),
+    '--nick',   String(o.nick ?? ''),
+    '--realname', String(o.realname ?? '')
+  ];
+  if (o.tls) args.push('--tls');
 
   // UI transport
   let connectSpec = null;
@@ -661,11 +682,16 @@ async function startSession(sessionId, opts) {
     sessions.delete(sessionId);
   });
 
-  sessions.set(sessionId, { child, env, exe, sock, rl, opts, unixSockPath, sessionKey });
+  // Store canonicalized opts so everything else reads consistent values
+  sessions.set(sessionId, { child, env, exe, sock, rl, opts: o, unixSockPath, sessionKey });
   sendToAll('session:status', { id: sessionId, status: 'running' });
 
-  return { id: sessionId, socket: unixSockPath || `${connectSpec.host}:${connectSpec.port}` };
+  return {
+    id: sessionId,
+    socket: unixSockPath || `${connectSpec.host}:${connectSpec.port}`
+  };
 }
+
 async function stopSession(sessionId) {
   const s = sessions.get(sessionId);
   if (!s) return;

@@ -1,3 +1,4 @@
+import { defaultPort, canonicalizeConnOptions } from '../config/defaults.js';
 import { createNetworkView } from '../ui/NetworkView.js';
 import { ChannelPane } from '../ui/ChannelPane.js';
 import { ConsolePane } from '../ui/ConsolePane.js';
@@ -170,9 +171,10 @@ export function destroyNetwork(netId) {
 }
 
 export function networkId(opts, sessionId) {
-  const host = opts?.server || 'session';
-  const port = (opts?.ircPort ?? 0);
-  const proto = opts?.tls ? 'tls' : 'tcp';
+  const o = canonicalizeConnOptions(opts);
+  const host = o?.server || 'session';
+  const port = o?.ircPort ?? defaultPort(o?.tls);
+  const proto = o?.tls ? 'tls' : 'tcp';
   return `${host}:${port}:${proto}:${sessionId || 'default'}`;
 }
 
@@ -192,7 +194,8 @@ export function activateNetwork(id) {
 }
 
 export function ensureNetwork(opts, sessionId, mountEl) {
-  const id = networkId(opts, sessionId);
+  const o = canonicalizeConnOptions(opts);
+  const id = networkId(o, sessionId);
   if (store.networks.has(id)) {
     const net = store.networks.get(id);
     activateNetwork(id);
@@ -205,25 +208,19 @@ export function ensureNetwork(opts, sessionId, mountEl) {
   const net = {
     id,
     sessionId,
-    host: opts?.server || 'session',
-    port: opts?.ircPort ?? 0,
-    tls: !!opts?.tls,
-    nick: opts?.nick || null,
-    authType: (opts?.authType || 'none').toLowerCase(),
-    authUsername: opts?.authUsername || null,
-    authPassword: opts?.authPassword || null,
-    viewEl: view,
-    chanListEl: chanList,
-    chanHost,
-    channels: new Map(),
-    activeChan: null,
-    console: null,
-    dmWindows: new Map(),   // nick -> { pane: PrivmsgPane }
-    selfNick: null,         // learned from CLIENT {type:"client_user"}
-    chanMap: new Map(),        // "#chan" -> { topic, users:Set }
-    userMap: new Map(),        // nick -> info
-    chanListTable: new Map(),  // name -> { users:number, topic:string }
-    _nickservTried: false,     // internal guard for auto-identify
+    host: o.server || 'session',
+    port: o.ircPort ?? defaultPort(o.tls),
+    tls: !!o.tls,
+    nick: o.nick || null,
+    authType: (o.authType || 'none').toLowerCase(),
+    authUsername: o.authUsername || null,
+    authPassword: o.authPassword || null,
+    viewEl: view, chanListEl: chanList, chanHost,
+    channels: new Map(), activeChan: null,
+    console: null, dmWindows: new Map(),
+    selfNick: null, chanMap: new Map(),
+    userMap: new Map(), chanListTable: new Map(),
+    _nickservTried: false,
   };
   store.networks.set(id, net);
 
