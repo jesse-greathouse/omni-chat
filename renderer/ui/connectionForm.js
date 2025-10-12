@@ -5,11 +5,11 @@ export function createProfilesPanel({ onConnect }) {
   wrap.className = 'conn-wrap';
   wrap.innerHTML = `
     <div class="conn-card panel">
-      <h3>Omni-Chat - Connections</h3>
+      <h3>Connections</h3>
 
       <div class="conn-grid">
         <section class="card">
-          <h4 class="h4-tight">Global Defaults</h4>
+          <h4 class="h4-tight">Global Settings</h4>
           <div class="form-row">
             <label>Authentication</label>
             <select id="gAuth">
@@ -27,7 +27,7 @@ export function createProfilesPanel({ onConnect }) {
           </div>
           <div class="form-row"><label>Realname</label><input id="gReal" type="text"/></div>
           <div class="row-actions">
-            <button class="btn" id="saveGlobals">Save Defaults</button>
+            <button class="btn" id="saveGlobals">Save Settings</button>
           </div>
           <div class="muted fs-12 mt-6">
             Server profiles inherit these when their Nick/Realname are empty or null.
@@ -156,7 +156,7 @@ export function createProfilesPanel({ onConnect }) {
     const authUsername = authType === 'sasl' ? (gAuthUser.value.trim() || null) : null;
     const authPassword = gAuthPass.value || null;
     await api.settings.set('globals', { nick, realname, authType, authUsername, authPassword });
-    alert('Saved global defaults.');
+    alert('Settings saved.');
   });
   addServerBtn.addEventListener('click', () => openEditor(null)); // new
 

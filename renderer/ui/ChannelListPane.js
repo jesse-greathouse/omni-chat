@@ -68,7 +68,7 @@ export class ChannelListPane {
     // empty
     this.empty = document.createElement('div');
     this.empty.className = 'chanlist-empty';
-    this.empty.textContent = 'No channel data yet. Click "Refresh list".';
+    this.empty.textContent = 'No channels loaded yet. Click "Refresh" to fetch the list.';
     this.empty.hidden = true;
     this.wrap.appendChild(this.empty);
 

@@ -17,7 +17,7 @@ export class ConsolePane extends Pane {
     });
 
     this.composer = new Composer({
-      placeholder: 'Type a command or message...',
+      placeholder: 'Enter command or message…',
       onSubmit: (text) => {
         // Console sends verbatim to the backend
         try { api.sessions.send(this.net.sessionId, text); } catch (e) { console.error('[ConsolePane send]', e); }
