@@ -20,11 +20,11 @@
   // Subscribe and keep unsubscribe handles
   const offLog  = window.api.bootstrap.onLog((line) => appendLog(line));
   const offDone = window.api.bootstrap.onDone(() => {
-    statusEl.textContent = 'ok';
+    statusEl.textContent = 'OK';
     statusEl.classList.add('ok');
   });
   const offErr  = window.api.bootstrap.onError((code) => {
-    statusEl.textContent = 'error';
+    statusEl.textContent = 'Error';
     statusEl.classList.add('err');
     appendLog('\n[bootstrap] exited with code ' + code + '\n');
   });
