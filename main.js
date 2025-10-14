@@ -7,7 +7,7 @@ import net from 'node:net';
 import { randomBytes, createHash } from 'node:crypto';
 import readline from 'node:readline';
 import { spawn, execFile, spawnSync } from 'node:child_process';
-import { DEFAULTS, defaultPort, canonicalizeConnOptions } from './renderer/config/defaults.js';
+import { defaultPort, canonicalizeConnOptions } from './renderer/config/defaults.js';
 
 /* =============================================================================
   Globals
@@ -21,6 +21,7 @@ let tray = null;
 let bootstrapChild = null;
 let bootstrapLogPath = null;
 let _cachedOverlayPng = null;
+let settingsWin = null;
 
 /* =============================================================================
   Paths & Small Utilities
@@ -80,6 +81,89 @@ function enableContextMenu(win) {
     menu.popup({ window: win });
   });
 }
+
+/** Back-compat shim for old & new console-message signatures. */
+function onConsoleMessage(wc, tag) {
+  wc.on('console-message', (_e, a2, a3, a4, a5) => {
+    let level, message, line, sourceId;
+    // New signature: (_e, paramsObject)
+    if (a2 && typeof a2 === 'object' && ('level' in a2 || 'message' in a2)) {
+      ({ level, message, line, sourceId } = a2);
+    } else {
+      // Old signature: (_e, level, message, line, sourceId)
+      level = a2; message = a3; line = a4; sourceId = a5;
+    }
+    const lvlName = ['log','warn','error','debug'][level] || String(level);
+    console.log(`[renderer][${tag}][${lvlName}] ${sourceId}:${line} ${message}`);
+  });
+}
+
+// App-wide accelerators (per-window hook) for Control+S and Control+Escape
+function wireAppAccelerators(win) {
+  win.webContents.on('before-input-event', (event, input) => {
+    if (input.type !== 'keyDown') return;
+    // Spec explicitly says "control", not "command"
+    const ctrl = input.control === true; // do not treat meta as control
+    if (!ctrl) return;
+    const key = (input.key || '').toLowerCase();
+    if (key === 's') {
+      openSettingsWindow();
+      event.preventDefault();
+    } else if (key === 'escape') {
+      app.quit();
+      event.preventDefault();
+    }
+  });
+}
+
+function openSettingsWindow() {
+  if (settingsWin && !settingsWin.isDestroyed()) {
+    settingsWin.focus();
+    return;
+  }
+  settingsWin = new BrowserWindow({
+    width: 1200,
+    height: 800,
+    center: true,
+    resizable: true,
+    title: 'Omni-Chat Settings',
+    icon: process.platform === 'win32'
+      ? assetPath('build', 'icons', 'icon.ico')
+      : assetPath('build', 'icons', 'png', 'icon.png'),
+    autoHideMenuBar: true,
+    webPreferences: {
+      preload: path.join(app.getAppPath(), 'preload.cjs'),
+      contextIsolation: true,
+      nodeIntegration: false
+    }
+  });
+  try { settingsWin.setMenu(null); settingsWin.setMenuBarVisibility(false); }
+  catch (e) { console.warn('[settingsWin menu clear]', e); }
+
+  settingsWin.loadFile(path.join(app.getAppPath(), 'renderer', 'settings.html'));
+
+  // <<< use shim here
+  onConsoleMessage(settingsWin.webContents, 'settings');
+
+  settingsWin.webContents.on('did-fail-load', (_e, code, desc, url) => {
+    console.error('[settings did-fail-load]', { code, desc, url });
+  });
+  settingsWin.on('unresponsive', () => console.error('[settings] UNRESPONSIVE'));
+  settingsWin.webContents.on('render-process-gone', (_e, details) => {
+    console.error('[settings render-process-gone]', details);
+  });
+
+  settingsWin.webContents.on('did-finish-load', () => {
+    try { settingsWin.setTitle('Omni-Chat Settings'); } catch {}
+  });
+
+  wireEditAccelerators(settingsWin);
+  enableContextMenu(settingsWin);
+  wireAppAccelerators(settingsWin);
+
+  settingsWin.on('closed', () => { settingsWin = null; });
+}
+
 function putUser(key, val) {
   userCache.set(key, val);
   if (userCache.size > MAX_USERS) {
@@ -90,9 +174,9 @@ function putUser(key, val) {
 function seedUnixPath(env) {
   if (process.platform === 'darwin' || process.platform === 'linux') {
     const seed = [
-      '/opt/homebrew/bin','/opt/homebrew/sbin', // Apple Silicon Homebrew
-      '/usr/local/bin','/usr/local/sbin',       // Intel mac / common Linux
-      '/opt/local/bin','/opt/local/sbin'        // MacPorts
+      '/opt/homebrew/bin','/opt/homebrew/sbin',
+      '/usr/local/bin','/usr/local/sbin',
+      '/opt/local/bin','/opt/local/sbin'
     ];
     const cur = env.PATH || '';
     const add = seed.filter(p => !cur.split(':').includes(p));
@@ -101,13 +185,11 @@ function seedUnixPath(env) {
   return env;
 }
 function resolveTool(name, extraDirs = []) {
-  // 1) explicit overrides
   const k = [`${name.toUpperCase()}_EXE`, `OMNI_${name.toUpperCase()}_EXE`];
   for (const key of k) {
     const v = process.env[key];
     if (v && fs.existsSync(v)) return v;
   }
-  // 2) PATH search (portable)
   const PATH = (process.env.PATH || '').split(path.delimiter);
   for (const d of [...extraDirs, ...PATH]) {
     if (!d) continue;
@@ -129,7 +211,7 @@ function dmAppId(sessionId, username) {
   const cleanUser = String(username).toLowerCase().replace(/[^a-z0-9]+/g, '.').replace(/^\.+|\.+$/g, '');
   const cleanSess = String(sessionId).toLowerCase().replace(/[^a-z0-9]+/g, '.');
   const id = `com.omnichat.app.dm.${cleanUser}.${cleanSess}`;
-  return id.slice(0, 120); // headroom under 128
+  return id.slice(0, 120);
 }
 function dmKey(sessionId, peer) {
   return `${sessionId}:${String(peer || '').toLowerCase()}`;
@@ -139,11 +221,12 @@ function createDMWindow(sessionId, peer, bootLine ) {
   const key = dmKey(sessionId, peer);
   const existing = dmWindows.get(key);
   if (existing && !existing.isDestroyed()) {
-    // Keep minimized / background state intact; just deliver the line.
     if (bootLine) {
       try { existing.webContents.send('dm:line', { sessionId, peer, ...bootLine }); }
       catch (e) { console.error('[dm existing send boot line]', e); }
     }
+    try { existing.webContents.send('settings:changed', { full: settings.store }); }
+    catch (e) { console.error('[dm existing seed settings]', e); }
     return existing;
   } else if (existing?.isDestroyed()) {
     dmWindows.delete(key);
@@ -154,11 +237,10 @@ function createDMWindow(sessionId, peer, bootLine ) {
     height: 450,
     minWidth: 420,
     minHeight: 320,
-    title: String(peer), // native title = peer
+    title: String(peer),
     icon: isWin
       ? assetPath('build', 'icons', 'icon.ico')
       : assetPath('build', 'icons', 'png', 'omnichat_16.png'),
-    // use same preload so sessions/omni APIs exist
     webPreferences: {
       preload: path.join(app.getAppPath(), 'preload.cjs'),
       contextIsolation: true,
@@ -173,6 +255,17 @@ function createDMWindow(sessionId, peer, bootLine ) {
 
   w.loadFile(path.join(app.getAppPath(), 'renderer', 'dm.html'));
 
+  // <<< use shim here
+  onConsoleMessage(w.webContents, `dm ${sessionId}/${peer}`);
+
+  w.webContents.on('did-fail-load', (_e, code, desc, url) => {
+    console.error('[dm did-fail-load]', { code, desc, url, sessionId, peer });
+  });
+  w.on('unresponsive', () => console.error('[dm] UNRESPONSIVE', { sessionId, peer }));
+  w.webContents.on('render-process-gone', (_e, details) => {
+    console.error('[dm render-process-gone]', { sessionId, peer, details });
+  });
+
   wireEditAccelerators(w);
   enableContextMenu(w);
 
@@ -182,16 +275,10 @@ function createDMWindow(sessionId, peer, bootLine ) {
   w.webContents.on('did-finish-load', () => {
     try {
       w.setTitle(String(peer));
-      // Send init (unblocks dm.js -> sets state.sessionId and peer)
-      w.webContents.send('dm:init', {
-        sessionId,
-        peer,
-        bootLines: bootBuffer
-      });
-
-      // If we already know WHOIS/user info for this peer, deliver it now
+      w.webContents.send('dm:init', { sessionId, peer, bootLines: bootBuffer });
       const cached = userCache.get(dmKey(sessionId, peer));
       if (cached) { w.webContents.send('dm:user', { sessionId, user: cached }); }
+      w.webContents.send('settings:changed', { full: settings.store });
     } catch (e) { console.error('[dm did-finish-load init]', e); }
   });
   dmWindows.set(key, w);
@@ -205,11 +292,20 @@ const settings = new Store({
   name: 'omni-chat',
   defaults: {
     ui: { footerGap: 6 },
+    perf: {
+      TRANSCRIPT_MAX_LINES: 2000,
+      TRANSCRIPT_PRUNE_CHUNK: 200,
+      TRANSCRIPT_MAX_APPEND_PER_FRAME: 200,
+      TRANSCRIPT_BATCH_MS: 16,
+      TRANSCRIPT_SNAP_THRESHOLD_PX: 40,
+      CHANLIST_RENDER_CAP: 5000,
+      CHANLIST_RAF_RENDER: true,
+    },
     globals: { nick: 'guest', realname: 'Guest', authType: 'none', authUsername: null, authPassword: null },
     servers: {
       'irc.libera.chat': {
         host: 'irc.libera.chat',
-        port: DEFAULTS.IRC.PORT_TLS,
+        port: 6697,
         tls: true,
         nick: null, realname: null, authType: null, authUsername: null, authPassword: null
       }
@@ -217,16 +313,61 @@ const settings = new Store({
   }
 });
 
-ipcMain.handle('settings:get', (_e, key, fallback) => settings.get(key, fallback));
-ipcMain.handle('settings:set', (_e, key, value) => { settings.set(key, value); return true; });
-ipcMain.handle('settings:all', () => settings.store);
-ipcMain.handle('settings:path', () => settings.path);
-
-function getServers() {
-  const s = settings.get('servers', {});
-  return (s && typeof s === 'object') ? s : {};
+function sendSettingsChanged(partial) {
+  const full = settings.store;
+  sendToAll('settings:changed', { ...partial, full });
 }
-function setServers(next) { settings.set('servers', next || {}); }
+
+ipcMain.handle('settings:get',   (_e, key, fallback) => settings.get(key, fallback));
+ipcMain.handle('settings:set',   (_e, key, value)    => { settings.set(key, value); sendSettingsChanged({ domain: key, path: '', value }); return true; });
+ipcMain.handle('settings:all',   () => settings.store);
+ipcMain.handle('settings:path',  () => settings.path);
+ipcMain.handle('settings:saveAll', async () => true);
+
+ipcMain.handle('settings:resetAll', async () => {
+  try {
+    settings.clear();
+    sendSettingsChanged({});
+    return true;
+  } catch (e) {
+    console.error('[settings:resetAll]', e);
+    throw e;
+  }
+});
+
+function setPathInDomain(domain, dotted, value) {
+  const cur = settings.get(domain, {}) || {};
+  const parts = String(dotted || '').split('.').filter(Boolean);
+  if (parts.length === 0) {
+    settings.set(domain, value && typeof value === 'object' ? value : {});
+    return;
+  }
+  let t = cur;
+  for (let i = 0; i < parts.length - 1; i++) {
+    const k = parts[i];
+    t[k] = (t[k] && typeof t[k] === 'object') ? t[k] : {};
+    t = t[k];
+  }
+  t[parts.at(-1)] = value;
+  settings.set(domain, cur);
+}
+
+ipcMain.handle('settings:setPath', (_e, domain, path, value) => {
+  const dom = String(domain || '');
+  if (!['perf','ui','globals','servers'].includes(dom)) {
+    throw new Error(`bad domain: ${domain}`);
+  }
+  setPathInDomain(dom, path, value);
+  sendSettingsChanged({ domain: dom, path: String(path || ''), value });
+  clearTimeout(ipcMain.__settingsFullTimer);
+  ipcMain.__settingsFullTimer = setTimeout(() => {
+    sendSettingsChanged({ full: settings.store });
+  }, 150);
+  return true;
+});
+
+function getServers() { const s = settings.get('servers', {}); return (s && typeof s === 'object') ? s : {}; }
+function setServers(next) { settings.set('servers', next || {}); sendSettingsChanged({ domain: 'servers', path: '', value: next }); }
 function getGlobals() {
   const g = settings.get('globals', {});
   return {
@@ -254,10 +395,10 @@ function resolveServerProfile(host) {
     authPassword: (p.authPassword == null || p.authPassword === '') ? (g.authPassword || null) : p.authPassword
   };
 }
+
 ipcMain.handle('profiles:list', () => {
   const servers = getServers();
-  const out = {};
-  for (const [host, p] of Object.entries(servers)) out[host] = { ...p };
+  const out = {}; for (const [host, p] of Object.entries(servers)) out[host] = { ...p };
   return out;
 });
 ipcMain.handle('profiles:upsert', (_e, host, profile) => {
@@ -266,7 +407,7 @@ ipcMain.handle('profiles:upsert', (_e, host, profile) => {
   const servers = getServers();
   const existing = servers[host] || { host, port: defaultPort(true), tls: true, nick: null, realname: null };
 
-  const nextTls = (profile?.tls ?? existing.tls ?? true) !== false;
+  const nextTls  = (profile?.tls ?? existing.tls ?? true) !== false;
   const nextPort = Number(profile?.port ?? existing.port ?? defaultPort(nextTls));
 
   servers[host] = {
@@ -280,13 +421,19 @@ ipcMain.handle('profiles:upsert', (_e, host, profile) => {
     authPassword: (profile?.authPassword === undefined ? existing.authPassword : (profile.authPassword ?? null)),
   };
   setServers(servers);
+  sendSettingsChanged({ domain: 'servers', path: host, value: servers[host] });
   return true;
 });
 ipcMain.handle('profiles:delete', (_e, host) => {
   host = String(host || '').trim();
   if (!host) return false;
   const servers = getServers();
-  if (servers[host]) { delete servers[host]; setServers(servers); return true; }
+  if (servers[host]) {
+    delete servers[host];
+    setServers(servers);
+    sendSettingsChanged({ domain: 'servers', path: host, value: null });
+    return true;
+  }
   return false;
 });
 ipcMain.handle('profiles:resolve', (_e, host) => resolveServerProfile(String(host || '').trim()));
@@ -345,19 +492,16 @@ async function resolveOmniIrcClientPath(env) {
   const exeName = isWin ? 'omni-irc-client.exe' : 'omni-irc-client';
   if (process.env.OMNI_IRC_CLIENT) return process.env.OMNI_IRC_CLIENT;
 
-  // dev build guess
   try {
     const guess = path.resolve(app.getAppPath(), '..', 'omni-irc', '_build', 'install', 'default', 'bin', exeName);
     if (fs.existsSync(guess)) return guess;
   } catch (e) { console.warn('[resolveOmniIrcClientPath guess]', e); }
 
-  // direct switch bin: $OPAMROOT/$OPAMSWITCH/bin
   const root = env.OPAMROOT || path.join(os.homedir(), '.opam');
   const sw   = env.OPAMSWITCH || 'omni-irc-dev';
   const fromSwitch = path.join(root, sw, 'bin', exeName);
   if (fs.existsSync(fromSwitch)) return fromSwitch;
 
-  // opam var bin (if opam is callable)
   try {
     const opamExe = resolveTool(isWin ? 'opam.exe' : 'opam',
       ['/opt/homebrew/bin','/usr/local/bin','/opt/local/bin']);
@@ -368,15 +512,12 @@ async function resolveOmniIrcClientPath(env) {
     }
   } catch (e) { console.warn('[resolveOmniIrcClientPath opam var bin]', e); }
 
-  // fall back to PATH (spawn will succeed if PATH is seeded)
   return exeName;
 }
 
 async function ensureClientBinary() {
-  // Start from a PATH that works on macOS/Linux GUI launches
   const base = seedUnixPath({ ...process.env });
 
-  // Try to get real opam env; if that fails, still return a usable env
   let env = base;
   try {
     const shellArg = isWin ? 'cmd' : 'sh';
@@ -390,7 +531,6 @@ async function ensureClientBinary() {
     env = next;
   } catch (e) {
     console.warn('[ensureClientBinary] opam env failed; falling back', e);
-    // Make sure the switch bin is on PATH even without opam
     const root = env.OPAMROOT || path.join(os.homedir(), '.opam');
     const sw   = 'omni-irc-dev';
     const bin  = path.join(root, sw, 'bin');
@@ -409,7 +549,7 @@ async function backendReady() {
     const res = spawnSync(exe, ['--version'], { env, windowsHide: true, encoding: 'utf8' });
     if (res.status === 0) return true;
     const s = (res.stdout || '') + (res.stderr || '');
-    return /omni-irc/i.test(s); // some builds only print on stderr
+    return /omni-irc/i.test(s);
   } catch (e) {
     console.error('[backendReady] version probe', e);
     return false;
@@ -456,7 +596,6 @@ function sendBootstrapLog(line) {
 async function runBootstrap({ mode = 'terminal' } = {}) {
   const cwd   = app.isPackaged ? process.resourcesPath : app.getAppPath();
   const env   = { ...process.env, OPAMYES: '1' };
-  // Make Homebrew/MacPorts visible when the app is launched from Finder
   if (process.platform === 'darwin') {
     const seed = [
       '/opt/homebrew/bin','/opt/homebrew/sbin',
@@ -496,11 +635,8 @@ async function runBootstrap({ mode = 'terminal' } = {}) {
     }
 
     if (process.platform === 'darwin') {
-      // 1) Ensure a fresh log file and start the bootstrap in BACKGROUND (it will write to this log).
-      //    (Background mode below truncates bootstrap.log each run.)
       await runBootstrap({ mode: 'background' });
 
-      // 2) Create a small .command that tails the log and exits when the bootstrap finishes.
       const logPath = path.join(app.getPath('userData'), 'bootstrap.log');
       const tmpCmd  = path.join(app.getPath('userData'), `tail-bootstrap-${Date.now()}.command`);
       const tailScript = `#!/bin/sh
@@ -509,7 +645,6 @@ clear
 echo "Following install log:"
 echo "  $LOG"
 echo
-# Tail from the beginning (-n +1) and *exit* when the background run logs a success or error sentinel.
 /usr/bin/tail -n +1 -F "$LOG" | /usr/bin/awk '{ print; fflush(); if ($0 ~ /^✔ bootstrap completed successfully$/ || $0 ~ /^✘ bootstrap exited with code /) exit }'
 echo
 echo "*** Omni-IRC bootstrap finished. Press Return to close... ***"
@@ -519,7 +654,6 @@ read -r _
       catch (e) { console.error('[bootstrap tmp write]', e); }
       const child = spawn('open', ['-a', 'Terminal', tmpCmd], { detached: true, stdio: 'ignore' });
       child.unref();
-      // Best-effort cleanup
       setTimeout(() => {
         try { fs.unlinkSync(tmpCmd); }
         catch (e) { console.error('[bootstrap tmp cleanup]', e); }
@@ -527,7 +661,6 @@ read -r _
       return true;
     }
 
-    // Linux
     const t = findTerminalOnLinux(cwd, script);
     if (!t) throw new Error('No terminal emulator found (x-terminal-emulator, gnome-terminal, konsole, xfce4-terminal, xterm, alacritty, kitty).');
     const child = spawn(t.cmd, t.args, { detached: true, stdio: 'ignore' });
@@ -535,17 +668,14 @@ read -r _
     return true;
   }
 
-  // --- background mode ---
   if (bootstrapChild && !bootstrapChild.killed) {
     try { bootstrapChild.kill(); }
     catch (e) { console.warn('[bootstrap kill previous]', e); }
     bootstrapChild = null;
   }
-  // Fresh log every run
   bootstrapLogPath = path.join(app.getPath('userData'), 'bootstrap.log');
   try {
     fs.mkdirSync(path.dirname(bootstrapLogPath), { recursive: true });
-    // Truncate + header
     fs.writeFileSync(bootstrapLogPath, `# Omni-IRC bootstrap log -- ${new Date().toISOString()}\n`);
   } catch (e) { console.error('[bootstrap prepare log]', e); }
 
@@ -555,13 +685,11 @@ read -r _
     sendBootstrapLog(`[bootstrap] pwsh: ${pwsh}\n[bootstrap] cwd: ${cwd}\n[bootstrap] args: ${args.join(' ')}\n`);
     bootstrapChild = spawn(pwsh, args, { cwd, env, windowsHide: true });
   } else {
-    // Unix: run script, capture both stdout/stderr
     const cmd = `exec ${quote(script)} 2>&1`;
     bootstrapChild = spawn('sh', ['-c', cmd], { cwd, env });
   }
 
   sendBootstrapLog('[bootstrap] spawned\n');
-  // Pipe all output to the log file and to the UI stream.
   const logStream = (() => {
     try { return fs.createWriteStream(bootstrapLogPath, { flags: 'a' }); }
     catch (e) { console.warn('[bootstrap createWriteStream]', e); return null; }
@@ -600,11 +728,9 @@ read -r _
 async function startSession(sessionId, opts) {
   const { env, exe } = await ensureClientBinary();
 
-  // Canonicalize once and use *only* this object afterward.
   const o = canonicalizeConnOptions(opts);
-  const sessionKey = canonicalSessionKey(o); // use canonicalized
+  const sessionKey = canonicalSessionKey(o);
 
-  // Prevent duplicate sessions on Unix only
   if (!isWin) {
     for (const s of sessions.values()) {
       if (s.sessionKey === sessionKey) {
@@ -613,7 +739,6 @@ async function startSession(sessionId, opts) {
     }
   }
 
-  // Base CLI args — no more ad-hoc flip/flop logic
   const args = [
     '--server', String(o.server),
     '--port',   String(o.ircPort),
@@ -622,7 +747,6 @@ async function startSession(sessionId, opts) {
   ];
   if (o.tls) args.push('--tls');
 
-  // UI transport
   let connectSpec = null;
   let unixSockPath = null;
 
@@ -643,7 +767,6 @@ async function startSession(sessionId, opts) {
   const child = spawn(exe, args, { env, windowsHide: true });
   pipeChildLogs(child);
 
-  // Connect to UI pipe
   let sock, rl;
   try {
     sock = await new Promise((resolve, reject) => {
@@ -682,7 +805,6 @@ async function startSession(sessionId, opts) {
     sessions.delete(sessionId);
   });
 
-  // Store canonicalized opts so everything else reads consistent values
   sessions.set(sessionId, { child, env, exe, sock, rl, opts: o, unixSockPath, sessionKey });
   sendToAll('session:status', { id: sessionId, status: 'running' });
 
@@ -717,7 +839,7 @@ async function restartSession(sessionId, opts) {
 function createWindow() {
   const iconWinLinux = isWin
     ? assetPath('build', 'icons', 'icon.ico')
-    : assetPath('build', 'icons', 'png', 'icon.png'); // used on Linux; mac ignores window icon
+    : assetPath('build', 'icons', 'png', 'icon.png');
   mainWin = new BrowserWindow({
     width: 1480,
     height: 1000,
@@ -733,6 +855,24 @@ function createWindow() {
   });
   mainWin.loadFile('index.html');
 
+  // <<< use shim here
+  onConsoleMessage(mainWin.webContents, 'main');
+
+  mainWin.webContents.on('did-fail-load', (_e, errCode, errDesc, url, isMainFrame) => {
+    console.error('[mainWin did-fail-load]', { errCode, errDesc, url, isMainFrame });
+  });
+  mainWin.on('unresponsive', () => console.error('[mainWin] UNRESPONSIVE'));
+  mainWin.webContents.on('render-process-gone', (_e, details) => {
+    console.error('[mainWin render-process-gone]', details);
+  });
+  mainWin.webContents.on('gpu-process-crashed', (_e, killed) => {
+    console.error('[GPU crashed]', { killed });
+  });
+
+  mainWin.webContents.on('did-finish-load', () => {
+    try { sendSettingsChanged({}); } catch (e) { console.error('[mainWin seed full]', e); }
+  });
+
   wireEditAccelerators(mainWin);
   enableContextMenu(mainWin);
 }
@@ -740,12 +880,34 @@ function createWindow() {
 function buildMenu() {
   const isMac = process.platform === 'darwin';
 
-  const tpl = [
-    ...(isMac ? [{
-      label: app.name,
-      submenu: [{ role: 'about' }, { type: 'separator' }, { role: 'hide' }, { role: 'hideOthers' }, { role: 'unhide' }, { type: 'separator' }, { role: 'quit' }]
-    }] : []),
+  const appMenu = {
+    label: app.name,
+    submenu: [
+      ...(isMac ? [
+        { role: 'about' },
+        { type: 'separator' },
+      ] : []),
+      {
+        label: isMac ? 'Preferences…' : 'Settings',
+        role: isMac ? 'preferences' : undefined,
+        accelerator: 'Ctrl+S',
+        click: () => openSettingsWindow()
+      },
+      { type: 'separator' },
+      ...(isMac ? [
+        { role: 'hide' }, { role: 'hideOthers' }, { role: 'unhide' },
+        { type: 'separator' },
+      ] : []),
+      {
+        label: 'Quit',
+        accelerator: 'Ctrl+Escape',
+        click: () => app.quit()
+      }
+    ]
+  };
 
+  const tpl = [
+    appMenu,
     {
       label: 'Edit',
       submenu: [
@@ -755,7 +917,6 @@ function buildMenu() {
         ...(isMac ? [{ type: 'separator' }, { label: 'Speech', submenu: [{ role: 'startSpeaking' }, { role: 'stopSpeaking' }] }] : [])
       ]
     },
-
     {
       label: 'View',
       submenu: [
@@ -768,18 +929,14 @@ function buildMenu() {
           click: () => {
             const win = BrowserWindow.getFocusedWindow();
             if (!win) return;
-            if (win.webContents.isDevToolsOpened()) {
-              win.webContents.closeDevTools();
-            } else {
-              win.webContents.openDevTools({ mode: 'detach' }); // or omit option to dock
-            }
+            if (win.webContents.isDevToolsOpened()) win.webContents.closeDevTools();
+            else win.webContents.openDevTools({ mode: 'detach' });
           }
         },
         { type: 'separator' },
         { role: 'togglefullscreen' }
       ]
     },
-
     { label: 'Window', submenu: [{ role: 'minimize' }, { role: 'close' }]},
     { role: 'help', submenu: [] }
   ];
@@ -788,10 +945,8 @@ function buildMenu() {
 }
 
 function setupTray() {
-  // Use resourcesPath when packaged; dev path otherwise
   const trayIconPath = (() => {
     if (process.platform === 'darwin') {
-      // we shipped PNGs under Resources/icons/png via extraResources
       return assetPath('icons', 'png', 'omnichat_32.png');
     }
     if (isWin) return assetPath('build', 'icons', 'icon.ico');
@@ -808,10 +963,23 @@ function setupTray() {
   IPC Wiring
 ============================================================================= */
 function setupIPC() {
+  const trace = (name, fn) => ipcMain.handle(name, async (evt, ...args) => {
+    const t0 = Date.now();
+    try {
+      const res = await fn(evt, ...args);
+      const dt = Date.now() - t0;
+      if (dt > 250) console.warn(`[ipc][${name}] slow: ${dt}ms`, { argsPreview: JSON.stringify(args).slice(0, 200) });
+      return res;
+    } catch (e) {
+      console.error(`[ipc][${name}] error`, e);
+      throw e;
+    }
+  });
+
   // Sessions
-  ipcMain.handle('session:start', async (_e, id, opts) => startSession(id || genId(), opts));
-  ipcMain.handle('session:stop',  async (_e, id)       => stopSession(id));
-  ipcMain.handle('session:restart', async (_e, id, opts) => restartSession(id, opts));
+  trace('session:start',   (_e, id, opts) => startSession(id || genId(), opts));
+  trace('session:stop',    (_e, id)       => stopSession(id));
+  trace('session:restart', (_e, id, opts) => restartSession(id, opts));
 
   ipcMain.on('session:send', (_e, { id, line }) => {
     const s = sessions.get(id);
@@ -827,9 +995,9 @@ function setupIPC() {
   });
 
   // Bootstrap
-  ipcMain.handle('bootstrap:runTerminal', async () => runBootstrap({ mode: 'terminal' }));
-  ipcMain.handle('bootstrap:start',       async () => runBootstrap({ mode: 'background' }));
-  ipcMain.handle('bootstrap:openLogs',    async () => { await shell.openPath(app.getPath('userData')); return true; });
+  trace('bootstrap:runTerminal', () => runBootstrap({ mode: 'terminal' }));
+  trace('bootstrap:start',       () => runBootstrap({ mode: 'background' }));
+  trace('bootstrap:openLogs',    async () => { await shell.openPath(app.getPath('userData')); return true; });
   ipcMain.on('bootstrap:proceed-if-ready', async () => {
     if (await backendReady()) {
       try { installerWin?.close(); }
@@ -841,16 +1009,12 @@ function setupIPC() {
   });
 
   // DMs
-  ipcMain.handle('dm:open', async (_e, { sessionId, peer, bootLine }) => {
-    createDMWindow(sessionId, peer, bootLine);
-    return true;
-  });
+  trace('dm:open', (_e, { sessionId, peer, bootLine }) => { createDMWindow(sessionId, peer, bootLine); return true; });
 
   ipcMain.on('dm:notify', (_e, { sessionId, peer }) => {
     const w = dmWindows.get(dmKey(sessionId, peer));
     if (!w || w.isDestroyed()) return;
 
-    // tell the renderer "a DM notify happened" (renderer plays sound)
     const cueNotify = () => {
       try { w.webContents.send('dm:notify', { sessionId, peer }); }
       catch (e) { console.error('[dm notify send]', e); }
@@ -868,8 +1032,6 @@ function setupIPC() {
         }
       };
 
-      // Works for both visible and minimized windows; only wait if it truly
-      // hasn’t been shown yet (no taskbar button yet).
       if (w.isMinimized() || w.isVisible()) {
         setOverlay();
       } else {
@@ -902,10 +1064,8 @@ function setupIPC() {
       user.nick || user.nickname || user.name || user.user || user.username;
     if (!nick) return;
 
-    // cache latest user for quick replies
     putUser(dmKey(sessionId, nick), { ...user });
 
-    // deliver to any DM window whose peer matches this nick (case-insensitive) in this session
     for (const [key, win] of dmWindows.entries()) {
       if (!win || win.isDestroyed()) continue;
       const [sess, peerLower] = key.split(':');
@@ -920,7 +1080,6 @@ function setupIPC() {
     if (!nick) return;
     const cached = userCache.get(dmKey(sessionId, nick));
     if (cached) {
-      // reply only to the requesting DM window
       try { evt.sender.send('dm:user', { sessionId, user: cached }); }
       catch (e) { console.error('[dm request-user reply]', e); }
     }
@@ -951,7 +1110,6 @@ function createInstallerWindow() {
 async function ensureBackendReadyAtStartup() {
   const ok = await backendReady();
   if (ok) return true;
-  // show installer; bootstrap IPC already wired in setupIPC()
   createInstallerWindow();
   return false;
 }
@@ -980,9 +1138,10 @@ app.whenReady().then(async () => {
     callback({ responseHeaders: headers });
   });
 
-  // Make brew/macports visible when launched from Finder
   seedUnixPath(process.env);
   setupIPC();
+  try { sendToAll('settings:changed', { full: settings.store }); }
+  catch (e) { console.warn('[prime settings broadcast]', e); }
   const ok = await ensureBackendReadyAtStartup();
   if (ok) { createWindow(); buildMenu(); setupTray(); }
 });
@@ -995,3 +1154,10 @@ app.on('before-quit', async () => {
   );
 });
 app.on('window-all-closed', () => app.quit());
+
+process.on('uncaughtException', (e) => {
+  console.error('[main uncaughtException]', e);
+});
+process.on('unhandledRejection', (reason, p) => {
+  console.error('[main unhandledRejection]', reason, { promise: p });
+});

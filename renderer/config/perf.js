@@ -1,13 +1,26 @@
-// renderer/config/perf.js
-export const PERF = Object.freeze({
-  // Transcript targets
-  TRANSCRIPT_MAX_LINES: 2000,
-  TRANSCRIPT_PRUNE_CHUNK: 200,
-  TRANSCRIPT_MAX_APPEND_PER_FRAME: 200, // backpressure guard
-  TRANSCRIPT_BATCH_MS: 16,              // coalesce bursts (1 frame)
-  TRANSCRIPT_SNAP_THRESHOLD_PX: 40,
+import { SHEET } from './baseline.js';
 
-  // Channel list targets
-  CHANLIST_RENDER_CAP: 5000,     // show top N by users on snapshot
-  CHANLIST_RAF_RENDER: true,     // collapse multiple snapshot events into 1/raf
-});
+// Reference-stable, live object.
+export const PERF = { ...SHEET.perf };
+
+// seed
+try {
+  Object.assign(PERF, (globalThis.api?.__settingsCache?.perf || {}));
+} catch (e) { console.warn('[settings:perf config seed] failed', e); }
+
+// live updates
+try {
+  globalThis.api?.events?.on?.('settings:changed', (msg) => {
+    if (msg?.full?.perf) {
+      Object.assign(PERF, { ...SHEET.perf, ...msg.full.perf });
+      return;
+    }
+    if (msg?.domain === 'perf' && msg.path) {
+      const next = { ...PERF };
+      const parts = msg.path.split('.');
+      let t = next; for (let i = 0; i < parts.length - 1; i++) t = (t[parts[i]] ||= {});
+      t[parts.at(-1)] = msg.value;
+      Object.assign(PERF, { ...SHEET.perf, ...next });
+    }
+  });
+} catch (e) { console.warn('[settings:perf config live update] failed', e); }

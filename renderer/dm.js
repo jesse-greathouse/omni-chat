@@ -216,7 +216,7 @@ function sendNow() {
   input.value = '';
 }
 
-btnSend.addEventListener('click', sendNow);
+btnSend.addEventListener('click', () => { try { sendNow(); } catch (e) { console.error('[dm send click]', e); } });
 input.addEventListener('keydown', (e)=>{ if (e.key === 'Enter') sendNow(); });
 
 // receive routed DM lines (sent directly from main)

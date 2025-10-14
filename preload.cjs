@@ -1,4 +1,4 @@
-const { contextBridge, ipcRenderer } = require('electron');
+const { ipcRenderer, contextBridge } = require('electron');
 
 /*--------------------------------------------------
   Tiny in-memory event bus (matches adapter.js semantics)
@@ -50,19 +50,21 @@ const EVT = {
 /*--------------------------------------------------
   Helpers
 --------------------------------------------------- */
-const once = (ch, fn) => {
+function on(ch, fn) {
+  const h = (_e, payload) => {
+    try { fn(payload); } catch (e) { console.error('[preload on handler]', ch, e); }
+  };
+  ipcRenderer.on(ch, h);
+  return () => ipcRenderer.removeListener(ch, h);
+}
+function once(ch, fn) {
   const h = (_e, payload) => {
     try { fn(payload); } catch (e) { console.error('[preload once handler]', ch, e); }
     finally { ipcRenderer.removeListener(ch, h); }
   };
   ipcRenderer.on(ch, h);
   return () => ipcRenderer.removeListener(ch, h);
-};
-const on = (ch, fn) => {
-  const h = (_e, payload) => { try { fn(payload); } catch (e) { console.error('[preload on handler]', ch, e); } };
-  ipcRenderer.on(ch, h);
-  return () => ipcRenderer.removeListener(ch, h);
-};
+}
 
 /*--------------------------------------------------
   Wire main -> renderer notifications into our local Bus
@@ -87,25 +89,14 @@ ipcRenderer.on('bootstrap:error', (_e, code) => bootstrapEmit('error', code));
 // DM windows: main emits these directly to the target BrowserWindow
 ipcRenderer.on('dm:line', (_e, p) => bus.emit(EVT.DM_LINE, p));
 ipcRenderer.on('dm:user', (_e, p) => bus.emit(EVT.DM_USER, p));
-
 // Main will send this when a DM arrives; forward to the in-page bus
 ipcRenderer.on('dm:notify', (_e, p) => bus.emit(EVT.DM_NOTIFY, p || {}));
 
 // UI pub/sub bridge (renderer -> main -> all renderers)
 // Preload exposes a local bus; .emit publishes to main, and we subscribe to ui-sub:* back.
-ipcRenderer.on('ui-sub:*', (_e, payload) => {
-  // Optional wildcard catch—kept for future extensions
-  if (payload && payload.event) bus.emit(String(payload.event), payload.payload);
-});
-// Generic "ui-sub:<event>" fan-in:
-ipcRenderer.onAny?.((ch, payload) => {
-  // Electron doesn't have onAny; this branch is a no-op. We rely on targeted handlers below.
-});
-
-// Instead, register a generic handler that matches our main.js pattern:
+// Map the specific events we need (extend as you add more UI events)
 const UI_SUB_PREFIX = 'ui-sub:';
 ipcRenderer.on(UI_SUB_PREFIX + EVT.UI_ACTIVE, (_e, payload) => bus.emit(EVT.UI_ACTIVE, payload));
-// (Add more mapped topics here if you expand UI pub/sub usage in the future)
 
 /*--------------------------------------------------
   DM window bootstrap: remember current sessionId/peer set by main via 'dm:init'
@@ -147,9 +138,9 @@ function bootstrapEmit(kind, payload) {
 }
 
 /*--------------------------------------------------
-  Exposed API
+  Exposed API (includes settings cache + granular setPath)
 ---------------------------------------------------- */
-contextBridge.exposeInMainWorld('api', {
+const EXPOSED_API = {
   // Shared event bus for renderer code
   events: {
     on: (topic, fn) => bus.on(topic, fn),
@@ -201,6 +192,9 @@ contextBridge.exposeInMainWorld('api', {
     set: (key, value)    => ipcRenderer.invoke('settings:set', key, value),
     getAll:              () => ipcRenderer.invoke('settings:all'),
     path:                () => ipcRenderer.invoke('settings:path'),
+    setPath:             (domain, path, value) => ipcRenderer.invoke('settings:setPath', domain, path, value),
+    saveAll:             () => ipcRenderer.invoke('settings:saveAll'),
+    resetAll:            () => ipcRenderer.invoke('settings:resetAll'),
   },
 
   /* Profiles */
@@ -221,4 +215,54 @@ contextBridge.exposeInMainWorld('api', {
     onDone:  (fn) => bootstrapOn('done', fn),
     onError: (fn) => bootstrapOn('error', fn),
   },
+
+  // a small public cache object modules can read to merge defaults + overrides
+  __settingsCache: {}
+};
+
+/*--------------------------------------------------
+  Settings cache bootstrapping + live updates
+---------------------------------------------------- */
+(async () => {
+  try {
+    const all = await ipcRenderer.invoke('settings:all');
+    // Write into the same object reference so readers keep seeing updates
+    Object.assign(EXPOSED_API.__settingsCache, all);
+    // Immediately notify renderers that a full snapshot is available.
+    // Many live modules only update on 'settings:changed'.
+    bus.emit('settings:changed', { full: all });
+  } catch (e) {
+    console.error('[preload] seed settings cache failed', e);
+  }
+})();
+
+// Keep cache + local bus in sync when main broadcasts.
+ipcRenderer.on('settings:changed', (_e, payload) => {
+  try {
+    // Update cache first (replace big domains to keep it simple)
+    if (payload?.full && typeof payload.full === 'object') {
+      const cache = EXPOSED_API.__settingsCache;
+      // clear & copy to keep reference identity
+      for (const k of Object.keys(cache)) delete cache[k];
+      Object.assign(cache, payload.full);
+    }
+  } catch (e) { console.error('[preload] settings cache merge', e); }
+
+  // Then let the renderer side react
+  bus.emit('settings:changed', payload);
 });
+
+
+/*--------------------------------------------------
+  Expose API to the page renderer
+---------------------------------------------------*/
+try {
+  // Avoid double-exposing if preload somehow runs twice
+  if (!globalThis.__OMNI_API_EXPOSED__) {
+    contextBridge.exposeInMainWorld('api', EXPOSED_API);
+    globalThis.__OMNI_API_EXPOSED__ = true;
+  }
+} catch (e) {
+  // If contextIsolation was turned off, exposeInMainWorld will throw; fall back
+  try { window.api = EXPOSED_API; } catch (_) {}
+}
