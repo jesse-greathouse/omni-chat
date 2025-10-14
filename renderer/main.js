@@ -68,7 +68,7 @@ function closeTab(id) {
   const t = tabs.get(id);
   if (t) {
     // Stop backend (safe if not running)
-    try { api.sessions.stop(id); } catch { console.error('[closeTab] stop error', e); }
+    try { api.sessions.stop(id); } catch (e) { console.error('[closeTab] stop error', e); }
 
     // Destroy the associated network UI/panes/timers/listeners if present
     if (t.netId) {
@@ -113,7 +113,14 @@ function mountProfilesPanel(layerEl) {
 
       // 2) start this tab’s session
       try {
-        await api.sessions.start(activeSessionId, opts);
+      console.log('[connect] starting session', activeSessionId, opts);
+      const p = api.sessions.start(activeSessionId, opts);
+      const withTimeout = Promise.race([
+        p,
+        new Promise((_, rej) => setTimeout(() => rej(new Error('session:start timeout (10s)')), 10_000))
+      ]);
+      await withTimeout;
+      console.log('[connect] session started', activeSessionId);
         // Success → remove the form in *all* cases so it doesn't overlay chat input.
         try { panel.remove(); } catch (e) { console.error('[connect] remove overlay after success', e); }
       } catch (e) {

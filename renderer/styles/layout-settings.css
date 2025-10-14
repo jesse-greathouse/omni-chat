@@ -1,0 +1,112 @@
+.settings-wrap {
+  height: 100%;
+  display: grid;
+  grid-template-rows: auto 1fr;
+}
+
+.settings-header {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-md);
+  padding: var(--space-6) var(--pad-x);
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+.settings-header h1 { margin: 0; font-size: 16px; font-weight: 600; }
+
+.settings-card {
+  height: 100%;
+  display: grid;
+  grid-template-rows: auto 1fr;
+  gap: var(--gap-lg);
+  padding: calc(var(--pad-y) + 2px) calc(var(--pad-x) + 2px);
+}
+
+.settings-tabs {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-sm);
+  padding-inline: var(--space-6);
+}
+.settings-tabs .tab { /* reuse tab look from layout-main.css */
+  padding: 4px var(--space-10); height: var(--tab-h);
+  border: 1px solid var(--border); background: var(--tab-bg); color: var(--fg);
+  border-radius: var(--radius-8); cursor: pointer; user-select: none;
+  transition: border-color .12s ease, background .12s ease;
+}
+.settings-tabs .tab.active { background: var(--tab-active); border-color: var(--primary-strong); }
+
+.view { display: none; min-height: 0; }
+.view.active { display: block; }
+
+/* Reuse connection grid for Connect tab to feel identical */
+.conn-grid {
+  display: grid;
+  grid-template-columns: minmax(320px, 1fr) minmax(520px, 1.5fr);
+  gap: 18px;
+  height: 100%;
+}
+@media (max-width: 880px) { .conn-grid { grid-template-columns: 1fr; } }
+
+.server-profiles { display: flex; flex-direction: column; }
+.server-profiles .profiles-list {
+  flex: 1 1 auto; min-height: 220px; overflow: auto;
+  display: grid;
+  gap: var(--gap-md);
+}
+
+/* Key/Value tables */
+.kv-table-wrap { overflow: auto; }
+.kv-table { width: 100%; border-collapse: collapse; }
+.kv-table th, .kv-table td {
+  padding: var(--space-8) var(--space-10);
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+.kv-table thead th { text-align: left; color: var(--muted); background: var(--surface); position: sticky; top: 0; }
+.kv-table td .kv-input {
+  width: 100%;
+  padding: var(--space-8) var(--space-10);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-6);
+  background: var(--input-bg);
+  color: var(--fg);
+}
+
+/* zebra & column sizing */
+.kv-table tbody tr:nth-child(odd) td { background: color-mix(in oklab, var(--surface) 88%, black 12%); }
+.kv-table td.k { width: 40%; font-family: var(--font-mono); color: var(--muted); }
+@media (max-width: 720px) { .kv-table td.k { width: 48%;
+
+/* Inline server rows created by settings.js */
+.server-row {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  border-radius: var(--radius-8);
+  padding: 12px 14px;
+  margin-bottom: var(--space-8);
+  transition: border-color .12s ease, background .12s ease, transform .08s ease;
+}
+.server-row:hover { border-color: var(--primary-strong); background: color-mix(in oklab, var(--surface) 92%, black 8%); }
+.server-row .server-head { display: flex; align-items: center; gap: var(--gap-md); }
+.server-row .server-host { font-weight: 600; }
+.server-row .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--gap-md); }
+.server-row .server-host { font-weight: 600; letter-spacing: .15px; }
+.server-row .grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--gap-md);
+  margin-top: 10px;
+}
+@media (max-width: 720px) { .server-row .grid { grid-template-columns: 1fr; } }
+
+/* nicer label alignment in form rows inside cards */
+.card .form-row label {
+  color: var(--muted);
+  text-align: right;
+  padding-right: 8px;
+}
+@media (max-width: 720px) {
+  .card .form-row { grid-template-columns: 1fr; }
+  .card .form-row label { text-align: left; padding-right: 0; }
+}

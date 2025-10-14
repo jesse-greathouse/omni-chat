@@ -53,20 +53,53 @@ export const TOPICS = Object.freeze({
  */
 
 // Use the injected API from preload; fall back to a no-op in dev
-const injected = globalThis.window?.api;
-if (!injected) {
-  console.warn('[adapter] window.api not injected; using inert shim for dev.');
-}
+// Helper to read the injected API when available
+const getInjected = () => (typeof window !== 'undefined' ? window.api : null);
 
 const inert = {
+  __inert: true,
   events: new Bus(),
   sessions: { start: async()=>{}, stop:()=>{}, send:()=>{}, onStatus:()=>{}, onError:()=>{}, onData:()=>{} },
   dm: { open: async()=>{}, notify:()=>{}, requestUser:()=>{}, pushUser:()=>{} },
-  settings: { getAll: async()=>({}), set: async()=>{} },
+  settings: {
+    getAll: async()=>({}),
+    set: async()=>{},
+    setPath: async()=>{},
+    saveAll: async()=>true,
+    path: async()=>'(inert-store.json)',
+    resetAll: async()=>{},
+  },
   profiles: { list: async()=>({}), resolve: async(h)=>({ host:h }), upsert: async()=>{}, del: async()=>{} },
   bootstrap: { runInTerminal:()=>{}, openLogsDir:()=>{}, proceedIfReady:()=>{}, onLog:()=>()=>{}, onDone:()=>()=>{}, onError:()=>()=>{} },
 };
 
-export const api = injected || inert;
-export const events = (injected || inert).events;
+// Track which properties we've already warned about (avoid recursion on the proxy)
+const _warnedProps = new Set();
+
+// Lazy proxy: every access re-checks if preload has injected the real API.
+export const api = new Proxy({}, {
+  get(_t, prop) {
+    const inj = getInjected() || inert;
+    if (inj.__inert && prop !== 'events' && prop !== '__inert') {
+      // Only warn for string props; skip Symbols like util.inspect/toStringTag
+      if (typeof prop === 'string' && !_warnedProps.has(prop)) {
+        console.warn(`[adapter] inert API in use (preload missing?) when accessing "${prop}"`);
+        _warnedProps.add(prop);
+      }
+    }
+    return inj[prop];
+  },
+  has(_t, prop) {
+    const inj = getInjected() || inert;
+    return prop in inj;
+  }
+});
+
+// Keep events dynamic as well (avoid capturing the inert bus too early)
+export const events = new Proxy({}, {
+  get(_t, prop) {
+    const inj = getInjected() || inert;
+    return inj.events[prop];
+  }
+});
 export { TOPICS as EVT };

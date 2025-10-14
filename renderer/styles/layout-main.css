@@ -161,7 +161,6 @@
 }
 
 .form-row input[type="checkbox"] { transform: translateY(1px); }
-.row-actions { display: flex; gap: var(--gap-md); justify-content: flex-end; margin-top: 12px; }
 
 /* Error console */
 #errorDock {
@@ -198,7 +197,3 @@
 .chanlist-pane .chan-btn:hover { border-color: var(--primary-strong); }
 .chanlist-pane td.num, .chanlist-pane th.num { text-align: right; }
 .chanlist-empty { color: var(--muted); padding: 12px; }
-
-/* Modal */
-.modal { position: fixed; inset: 0; background: rgba(0,0,0,.5); display: grid; place-items: center; z-index: 50; }
-.modal-card { width: 520px; border: 1px solid var(--border); background: var(--surface); border-radius: var(--radius-10); padding: 16px; }

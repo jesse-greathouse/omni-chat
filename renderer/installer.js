@@ -39,9 +39,10 @@
   btnRun.addEventListener('click', () => {
     statusEl.textContent = 'Installing...';
     statusEl.classList.remove('ok', 'err');
-    window.api.bootstrap.runInTerminal();
+    try { window.api.bootstrap.runInTerminal(); }
+    catch (e) { console.error('[installer] runInTerminal', e); }
   });
 
-  btnOpen.addEventListener('click', () => window.api.bootstrap.openLogsDir());
-  btnGo.addEventListener('click',   () => window.api.bootstrap.proceedIfReady());
+  btnOpen.addEventListener('click', () => { try { window.api.bootstrap.openLogsDir(); } catch (e) { console.error('[installer] openLogsDir', e); } });
+  btnGo.addEventListener('click',   () => { try { window.api.bootstrap.proceedIfReady(); } catch (e) { console.error('[installer] proceedIfReady', e); } });
 })();

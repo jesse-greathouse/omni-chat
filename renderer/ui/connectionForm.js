@@ -1,4 +1,5 @@
 import { api } from '../lib/adapter.js';
+import { createProfilesListController } from './partials/serverProfiles.js';
 
 export function createProfilesPanel({ onConnect }) {
   const wrap = document.createElement('div');
@@ -56,59 +57,11 @@ export function createProfilesPanel({ onConnect }) {
   const addServerBtn = wrap.querySelector('#addServer');
   const listEl = wrap.querySelector('#profilesList');
 
-  function serverRow(host, p) {
-    const row = document.createElement('div');
-    row.className = 'card g-cols-1-auto mt-6';
-
-    const left = document.createElement('div');
-    const right = document.createElement('div');
-    right.className = 'row';
-
-    const authLabel = (() => {
-      const t = (p.authType || '').toLowerCase();
-      if (!t) return 'auth=inherit';
-      if (t === 'none') return 'auth=None';
-      if (t === 'nickserv') return 'auth=NickServ';
-      if (t === 'sasl') return 'auth=SASL';
-      return `auth=${t}`;
-    })();
-
-    // Build label safely with text nodes
-    const top = document.createElement('div');
-    top.className = 'fw-600';
-    top.textContent = String(host ?? '');
-
-    const sub = document.createElement('div');
-    sub.className = 'muted fs-12';
-    const parts = [
-      (p.tls !== false ? 'TLS' : 'TCP'),
-      String(p.port ?? 6697),
-      (p.nick ? `nick=${p.nick}` : null),
-      (p.realname ? `realname=${p.realname}` : null),
-      authLabel,
-    ].filter(Boolean);
-    sub.textContent = parts.join(' | ');
-    left.append(top, sub);
-
-    const connectBtn = button('Connect', () => doConnect(host));
-    const editBtn    = button('Edit',    () => openEditor(host));
-    const delBtn     = button('Delete',  async () => {
-      if (!confirm(`Delete server profile "${host}"?`)) return;
-      await api.profiles.del(host);
-      await hydrate();
-    });
-    right.append(connectBtn, editBtn, delBtn);
-    row.append(left, right);
-    return row;
-  }
-
-  function button(text, onClick) {
-    const b = document.createElement('button');
-    b.className = 'btn';
-    b.textContent = text;
-    b.addEventListener('click', onClick);
-    return b;
-  }
+  // Shared profiles list (with Connect button in this view)
+  const profilesCtl = createProfilesListController(listEl, {
+    includeConnect: true,
+    onConnect: (opts, host) => onConnect?.(opts, host),
+  });
 
   async function hydrate() {
     const all = await api.settings.getAll();
@@ -129,17 +82,7 @@ export function createProfilesPanel({ onConnect }) {
     gAuthUserRow.classList.toggle('hidden', !isSasl);
     gAuthPassRow.classList.toggle('hidden', !(isSasl || isNickServ));
 
-    listEl.innerHTML = '';
-    const profs = await api.profiles.list();
-    const hosts = Object.keys(profs).sort((a,b)=>a.localeCompare(b));
-    if (hosts.length === 0) {
-      const empty = document.createElement('div');
-      empty.className = 'muted';
-      empty.textContent = 'No server profiles yet. Click "Add Server" to create one.';
-      listEl.appendChild(empty);
-    } else {
-      hosts.forEach(h => listEl.appendChild(serverRow(h, profs[h] || {})));
-    }
+    await profilesCtl.hydrate();
   }
 
   gAuth.addEventListener('change', () => {
@@ -150,19 +93,28 @@ export function createProfilesPanel({ onConnect }) {
   });
 
   saveGlobalsBtn.addEventListener('click', async () => {
-    const nick = gNick.value.trim() || 'guest';
-    const realname = gReal.value.trim() || 'Guest';
-    const authType = (gAuth.value || 'none').toLowerCase();
-    const authUsername = authType === 'sasl' ? (gAuthUser.value.trim() || null) : null;
-    const authPassword = gAuthPass.value || null;
-    await api.settings.set('globals', { nick, realname, authType, authUsername, authPassword });
-    alert('Settings saved.');
+    const nick        = gNick.value.trim() || 'guest';
+    const realname    = gReal.value.trim() || 'Guest';
+    const authType    = (gAuth.value || 'none').toLowerCase();
+    const authUsername= authType === 'sasl' ? (gAuthUser.value.trim() || null) : null;
+    const authPassword= (authType === 'sasl' || authType === 'nickserv') ? (gAuthPass.value || null) : null;
+
+    try { await Promise.all([
+      api.settings.setPath('globals', 'nick',         nick),
+      api.settings.setPath('globals', 'realname',     realname),
+      api.settings.setPath('globals', 'authType',     authType),
+      api.settings.setPath('globals', 'authUsername', authUsername),
+      api.settings.setPath('globals', 'authPassword', authPassword),
+    ]); alert('Settings saved.'); }
+    catch (e) { console.error('[settings set globals]', e); alert('Failed to save settings. See console.'); }
   });
-  addServerBtn.addEventListener('click', () => openEditor(null)); // new
+  addServerBtn.addEventListener('click', () => profilesCtl.openEditor(null));
 
   async function doConnect(host) {
     // resolve layered profile
-    const resolved = await api.profiles.resolve(host);
+    let resolved;
+    try { resolved = await api.profiles.resolve(host); }
+    catch (e) { console.error('[profiles.resolve]', host, e); alert('Failed to resolve profile. See console.'); return; }
     const opts = {
       server: resolved.host,
       ircPort: Number(resolved.port || 6697),
@@ -177,116 +129,7 @@ export function createProfilesPanel({ onConnect }) {
       authPassword: resolved.authPassword || null
     };
     // session start is handled by caller (renderer/main.js) so we just pass back
-    onConnect?.(opts, host);
-  }
-
-  // Inline editor dialog
-  function openEditor(host) {
-    const dialog = document.createElement('div');
-    dialog.className = 'modal';
-    dialog.innerHTML = `
-      <div class="modal-card">
-        <h4 class="h4-tight">${host ? 'Edit Server' : 'Add Server'}</h4>
-        <div class="form-row"><label>Host</label><input id="eHost" type="text" ${host?'disabled':''}/></div>
-        <div class="form-row"><label>Port</label><input id="ePort" type="number" value="6697"/></div>
-        <div class="form-row"><label>TLS</label><input id="eTLS" type="checkbox" checked/></div>
-        <div class="form-row"><label>Nick (override)</label><input id="eNick" type="text" placeholder="leave empty to inherit"/></div>
-        <div class="form-row"><label>Realname (override)</label><input id="eReal" type="text" placeholder="leave empty to inherit"/></div>
-        <div class="form-row">
-          <label>Authentication</label>
-          <select id="eAuth">
-            <option value="">Inherit (use Global)</option>
-            <option value="none">No authentication</option>
-            <option value="nickserv">NickServ</option>
-            <option value="sasl">SASL</option>
-          </select>
-        </div>
-        <div class="form-row" id="eAuthUserRow" style="display:none;">
-          <label>Username</label><input id="eAuthUser" type="text" placeholder="SASL only - leave empty to inherit"/>
-        </div>
-        <div class="form-row" id="eAuthPassRow" style="display:none;">
-          <label>Password</label><input id="eAuthPass" type="password" placeholder="leave empty to inherit"/>
-        </div>
-        <div class="row-actions">
-          <button class="btn" id="eSave">Save</button>
-          <button class="btn" id="eCancel">Cancel</button>
-        </div>
-      </div>
-    `;
-    const eHost = dialog.querySelector('#eHost');
-    const ePort = dialog.querySelector('#ePort');
-    const eTLS  = dialog.querySelector('#eTLS');
-    const eNick = dialog.querySelector('#eNick');
-    const eReal = dialog.querySelector('#eReal');
-    const eSave = dialog.querySelector('#eSave');
-    const eAuth = dialog.querySelector('#eAuth');
-    const eAuthUserRow = dialog.querySelector('#eAuthUserRow');
-    const eAuthPassRow = dialog.querySelector('#eAuthPassRow');
-    const eAuthUser = dialog.querySelector('#eAuthUser');
-    const eAuthPass = dialog.querySelector('#eAuthPass');
-    const eCancel = dialog.querySelector('#eCancel');
-
-    const updateAuthVisibility = () => {
-      const t = (eAuth.value || '').toLowerCase();
-      const isSasl = t === 'sasl';
-      const isNickServ = t === 'nickserv';
-      eAuthUserRow.style.display = isSasl ? '' : 'none';
-      eAuthPassRow.style.display = (isSasl || isNickServ) ? '' : 'none';
-    };
-
-    (async () => {
-      if (host) {
-        const profs = await api.profiles.list();
-        const p = profs[host] || {};
-        eHost.value = host;
-        ePort.value = Number(p.port ?? 6697);
-        eTLS.checked = p.tls !== false;
-        eNick.value = p.nick ?? '';
-        eReal.value = p.realname ?? '';
-        eAuth.value = (p.authType || '').toLowerCase();
-        eAuthUser.value = p.authUsername ?? '';
-        eAuthPass.value = p.authPassword ?? '';
-        updateAuthVisibility();
-      } else {
-        eHost.value = '';
-        ePort.value = 6697;
-        eTLS.checked = true;
-        eNick.value = '';
-        eReal.value = '';
-        eAuth.value = '';
-        eAuthUser.value = '';
-        eAuthPass.value = '';
-        updateAuthVisibility();
-      }
-    })();
-
-    eAuth.addEventListener('change', updateAuthVisibility);
-
-    eSave.addEventListener('click', async () => {
-      const hostVal = (eHost.value || '').trim();
-      if (!hostVal) { alert('Host is required'); return; }
-      const payload = {
-        port: Number(ePort.value || 6697),
-        tls: !!eTLS.checked,
-        nick: eNick.value.trim() === '' ? null : eNick.value.trim(),
-        realname: eReal.value.trim() === '' ? null : eReal.value.trim(),
-        // auth: null/'' => inherit global
-        authType: (eAuth.value || '') === '' ? null : (eAuth.value || '').toLowerCase(),
-        // Username only meaningful for SASL; null in other modes or when left empty
-        authUsername: ((eAuth.value || '').toLowerCase() === 'sasl')
-          ? (eAuthUser.value.trim() || null)
-          : null,
-        // Password applies to SASL and NickServ; empty => inherit (null)
-        authPassword: ((eAuth.value || '').toLowerCase() === 'sasl' || (eAuth.value || '').toLowerCase() === 'nickserv')
-          ? (eAuthPass.value || null)
-          : null
-      };
-      await api.profiles.upsert(hostVal, payload);
-      dialog.remove();
-      await hydrate();
-    });
-    eCancel.addEventListener('click', () => dialog.remove());
-    document.body.appendChild(dialog);
+    try { onConnect?.(opts, host); } catch (e) { console.error('[onConnect]', e); }
   }
 
   hydrate();

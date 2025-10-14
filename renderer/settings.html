@@ -1,0 +1,107 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8"/>
+    <meta http-equiv="X-UA-Compatible" content="IE=edge"/>
+    <meta name="viewport" content="width=device-width,initial-scale=1"/>
+    <title>Omni-Chat Settings</title>
+    <!-- Use the same token  component system as the main app -->
+    <link rel="stylesheet" href="./styles/index.css">
+    <!-- Page-specific layout (new) -->
+    <link rel="stylesheet" href="./styles/layout-settings.css">
+  </head>
+  <body>
+    <div class="settings-wrap">
+      <header class="settings-header">
+        <h1>Settings</h1>
+        <div class="spacer"></div>
+        <span id="settingsPath" class="pill mono"></span>
+        <button id="btnReload" class="btn">Reload</button>
+        <button id="btnReset"  class="btn btn--danger">Reset to Defaults</button>
+      </header>
+
+      <main class="settings-card panel">
+        <div id="tabs" class="settings-tabs">
+          <div class="tab active" data-view="connect">Connect</div>
+          <div class="tab" data-view="ui">UI</div>
+          <div class="tab" data-view="perf">Performance</div>
+        </div>
+
+        <!-- CONNECT -->
+        <section id="view-connect" class="view active">
+          <div class="conn-grid">
+            <section class="card">
+              <h4 class="h4-tight">Global Settings</h4>
+              <div class="form-row">
+                <label>Authentication</label>
+                <select id="gAuth">
+                  <option value="none">No authentication</option>
+                  <option value="nickserv">NickServ</option>
+                  <option value="sasl">SASL</option>
+                </select>
+              </div>
+              <div class="form-row"><label>Nick</label><input id="gNick" type="text"/></div>
+              <div class="form-row" id="gAuthUserRow" style="display:none;">
+                <label>Username</label><input id="gAuthUser" type="text" />
+              </div>
+              <div class="form-row" id="gAuthPassRow" style="display:none;">
+                <label>Password</label><input id="gAuthPass" type="password" />
+              </div>
+              <div class="form-row"><label>Realname</label><input id="gReal" type="text"/></div>
+              <div class="row-actions">
+                <button class="btn btn--primary" id="saveGlobals">Save Settings</button>
+              </div>
+              <div class="muted fs-12 mt-6">
+                Server profiles inherit these when Nick/Realname are empty or null.
+              </div>
+            </section>
+
+            <section class="card server-profiles">
+              <div class="row between">
+                <h4 class="h4-tight">Server Profiles</h4>
+                <div class="row">
+                  <button class="btn" id="addServerTop">Add Server</button>
+                </div>
+              </div>
+              <div id="serversList" class="profiles-list mt-8"></div>
+              <div class="row-actions">
+                <button class="btn" id="addServerBottom">Add Server</button>
+              </div>
+            </section>
+          </div>
+        </section>
+
+        <!-- UI -->
+        <section id="view-ui" class="view">
+          <section class="card">
+            <h4 class="h4-tight">UI Options</h4>
+            <div class="kv-table-wrap">
+              <table class="kv-table" aria-label="UI settings">
+                <thead>
+                  <tr><th class="k">Key</th><th>Value</th></tr>
+                </thead>
+                <tbody id="uiBody"></tbody>
+              </table>
+            </div>
+          </section>
+        </section>
+
+        <!-- PERF -->
+        <section id="view-perf" class="view">
+          <section class="card">
+            <h4 class="h4-tight">Performance</h4>
+            <div class="kv-table-wrap">
+              <table class="kv-table" aria-label="Performance settings">
+                <thead>
+                  <tr><th class="k">Key</th><th>Value</th></tr>
+                </thead>
+                <tbody id="perfBody"></tbody>
+              </table>
+            </div>
+          </section>
+        </section>
+      </main>
+    </div>
+    <script type="module" src="./settings.js"></script>
+  </body>
+</html>
