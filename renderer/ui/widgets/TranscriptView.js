@@ -1,5 +1,24 @@
 import { PERF } from '../../config/perf.js';
 import { el } from '../../lib/dom.js';
+import { UI } from '../../config/ui.js';
+import { SHEET } from '../../config/baseline.js';
+import { api } from '../../lib/adapter.js';
+
+// Coerce various inputs into a canonical "<int>px" string.
+// Accepts: 6, "6", "6px". Falls back if unrecognized.
+function normalizePx(val, fallback = '6px') {
+  if (val == null) return fallback;
+  if (typeof val === 'number' && Number.isFinite(val)) {
+    return `${Math.trunc(val)}px`;
+  }
+  if (typeof val === 'string') {
+    const s = val.trim().toLowerCase();
+    // Match "123" or "123px"
+    const m = /^(\d+)(?:px)?$/.exec(s);
+    if (m) return `${Number(m[1])}px`;
+  }
+  return fallback;
+}
 
 export class TranscriptView {
   /**
@@ -29,7 +48,62 @@ export class TranscriptView {
     this.maxLines   = opts.maxLines   ?? PERF.TRANSCRIPT_MAX_LINES;
     this.pruneChunk = opts.pruneChunk ?? PERF.TRANSCRIPT_PRUNE_CHUNK;
     this._snapPx    = PERF.TRANSCRIPT_SNAP_THRESHOLD_PX;
-  }
+    this._maxAppend = PERF.TRANSCRIPT_MAX_APPEND_PER_FRAME;
+
+    const toInt = (v, fallback) => {
+      if (v == null) return fallback;
+      if (typeof v === 'number' && Number.isFinite(v)) return Math.trunc(v);
+      const n = Number(String(v).trim());
+      return Number.isFinite(n) ? Math.trunc(n) : fallback;
+    };
+
+    // Bind footer gap to live UI config via CSS var
+    const applyGap = () => {
+      try {
+        const gap = normalizePx(UI.footerGap, SHEET.ui.footerGap);
+        this.root.style.setProperty('--footer-gap', gap);
+      }
+      catch {}
+    };
+
+    applyGap();
+
+    try {
+      api?.events?.on?.('settings:changed', (msg) => {
+        if (!msg) return;
+
+        // UI footer gap live update
+        {
+          const ui = msg.full?.ui ?? (msg.domain === 'ui' ? msg.value : null);
+          if (ui && (msg.full?.ui || msg.path === 'footerGap' || msg.path?.startsWith('footerGap'))) {
+            applyGap();
+          }
+        }
+
+        // PERF live updates relevant to TranscriptView
+        {
+          const perf = msg.full?.perf ?? (msg.domain === 'perf' ? msg.value : null);
+          if (!perf) return;
+          // fallbacks to SHEET.perf keep us magic-string free
+          if (Object.prototype.hasOwnProperty.call(perf, 'TRANSCRIPT_MAX_LINES') || msg.path === 'TRANSCRIPT_MAX_LINES') {
+            this.maxLines = toInt(perf.TRANSCRIPT_MAX_LINES, SHEET.perf.TRANSCRIPT_MAX_LINES);
+          }
+          if (Object.prototype.hasOwnProperty.call(perf, 'TRANSCRIPT_PRUNE_CHUNK') || msg.path === 'TRANSCRIPT_PRUNE_CHUNK') {
+            this.pruneChunk = toInt(perf.TRANSCRIPT_PRUNE_CHUNK, SHEET.perf.TRANSCRIPT_PRUNE_CHUNK);
+          }
+          if (Object.prototype.hasOwnProperty.call(perf, 'TRANSCRIPT_SNAP_THRESHOLD_PX') || msg.path === 'TRANSCRIPT_SNAP_THRESHOLD_PX') {
+            this._snapPx = toInt(perf.TRANSCRIPT_SNAP_THRESHOLD_PX, SHEET.perf.TRANSCRIPT_SNAP_THRESHOLD_PX);
+          }
+          if (Object.prototype.hasOwnProperty.call(perf, 'TRANSCRIPT_MAX_APPEND_PER_FRAME') || msg.path === 'TRANSCRIPT_MAX_APPEND_PER_FRAME') {
+            this._maxAppend = toInt(perf.TRANSCRIPT_MAX_APPEND_PER_FRAME, SHEET.perf.TRANSCRIPT_MAX_APPEND_PER_FRAME);
+          }
+          // TRANSCRIPT_BATCH_MS exists but isn't used here; no-op unless you wire batching-by-time.
+        }
+      });
+    } catch (e) {
+      console.warn('[TranscriptView] ui.footerGap binding failed (non-fatal)', e);
+    } 
+}
 
   setTopic(t) {
     if (!this.withTopic) return;
@@ -51,7 +125,7 @@ export class TranscriptView {
         this._pendingRaf = false;
         if (this._pending.length === 0) return;
         // Apply a frame cap to avoid pathological bursts
-        const take = this._pending.splice(0, PERF.TRANSCRIPT_MAX_APPEND_PER_FRAME);
+        const take = this._pending.splice(0, this._maxAppend);
         // move staged into main buffer
         Array.prototype.push.apply(this._lines, take);
         const over = this._lines.length - this.maxLines;
@@ -69,7 +143,7 @@ export class TranscriptView {
   _queueFollowUp() {
     requestAnimationFrame(() => {
       if (this._pending.length === 0) return;
-      const take = this._pending.splice(0, PERF.TRANSCRIPT_MAX_APPEND_PER_FRAME);
+      const take = this._pending.splice(0, this._maxAppend);
       Array.prototype.push.apply(this._lines, take);
       const over = this._lines.length - this.maxLines;
       if (over > 0) this._lines.splice(0, Math.max(over, this.pruneChunk));

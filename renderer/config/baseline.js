@@ -5,7 +5,7 @@ import { DEFAULTS } from './defaults.js';
 export const SHEET = Object.freeze({
   // UI -----------------------------------------------------------------------
   ui: {
-    footerGap: 6,
+    footerGap: '6px',
   },
 
   // Performance ---------------------------------------------------------------
