@@ -1,4 +1,6 @@
 import { defaultPort, canonicalizeConnOptions } from '../config/defaults.js';
+import { CONNECT } from '../config/connect.js';
+import { api } from '../lib/adapter.js';
 import { createNetworkView } from '../ui/NetworkView.js';
 import { ChannelPane } from '../ui/ChannelPane.js';
 import { ConsolePane } from '../ui/ConsolePane.js';
@@ -205,22 +207,38 @@ export function ensureNetwork(opts, sessionId, mountEl) {
   const { view, chanList, chanHost } = createNetworkView();
   (mountEl || uiRefs.viewsEl).appendChild(view);
 
+  // Determine which fields were explicitly provided vs inherited
+  const g = CONNECT.globals || {};
+  const inheritNick      = (o.nick == null || o.nick === '');
+  const inheritRealname  = (o.realname == null || o.realname === '');
+  const inheritAuthType  = (o.authType == null || o.authType === '');
+  const inheritAuthUser  = (o.authUsername == null || o.authUsername === '');
+  const inheritAuthPass  = (o.authPassword == null || o.authPassword === '');
+
   const net = {
     id,
     sessionId,
     host: o.server || 'session',
     port: o.ircPort ?? defaultPort(o.tls),
     tls: !!o.tls,
-    nick: o.nick || null,
-    authType: (o.authType || 'none').toLowerCase(),
-    authUsername: o.authUsername || null,
-    authPassword: o.authPassword || null,
+    nick:      inheritNick     ? (g.nick ?? null) : (o.nick ?? null),
+    realname:  inheritRealname ? (g.realname ?? null) : (o.realname ?? null),
+    authType:  (inheritAuthType ? (g.authType ?? 'none') : (o.authType ?? 'none')).toLowerCase(),
+    authUsername: inheritAuthUser ? (g.authUsername ?? null) : (o.authUsername ?? null),
+    authPassword: inheritAuthPass ? (g.authPassword ?? null) : (o.authPassword ?? null),
     viewEl: view, chanListEl: chanList, chanHost,
     channels: new Map(), activeChan: null,
     console: null, dmWindows: new Map(),
     selfNick: null, chanMap: new Map(),
     userMap: new Map(), chanListTable: new Map(),
     _nickservTried: false,
+    _inherits: {
+      nick: inheritNick,
+      realname: inheritRealname,
+      authType: inheritAuthType,
+      authUsername: inheritAuthUser,
+      authPassword: inheritAuthPass,
+    },
   };
   store.networks.set(id, net);
 
@@ -228,6 +246,32 @@ export function ensureNetwork(opts, sessionId, mountEl) {
   ensureChannelList(net);
   activateNetwork(id);
   return net;
+}
+
+// Keep inherited fields bonded to CONNECT.globals
+try {
+  api?.events?.on?.('settings:changed', (msg) => {
+    if (!msg) return;
+    // Prefer full snapshot path; otherwise look for domain=globals
+    const nextG =
+      msg.full?.globals ??
+      (msg.domain === 'globals' ? (msg.value || {}) : null);
+    if (!nextG) return;
+
+    for (const n of store.networks.values()) {
+      const inh = n._inherits || {};
+      // Only update fields that are still following globals
+      if (inh.nick && 'nick' in nextG)         n.nick = nextG.nick ?? n.nick ?? null;
+      if (inh.realname && 'realname' in nextG) n.realname = nextG.realname ?? n.realname ?? null;
+      if (inh.authType && 'authType' in nextG) n.authType = String(nextG.authType ?? n.authType ?? 'none').toLowerCase();
+      if (inh.authUsername && 'authUsername' in nextG)
+        n.authUsername = nextG.authUsername ?? n.authUsername ?? null;
+      if (inh.authPassword && 'authPassword' in nextG)
+        n.authPassword = nextG.authPassword ?? n.authPassword ?? null;
+    }
+  });
+} catch (e) {
+  console.warn('[store] live globals bonding failed (non-fatal)', e);
 }
 
 export function ensureDMWindow(net, peerNick) {

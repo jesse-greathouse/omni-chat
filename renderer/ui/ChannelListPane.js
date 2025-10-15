@@ -1,5 +1,6 @@
-import { api, events, EVT } from '../lib/adapter.js';
+import { api, events, EVT } from '../lib/adapter.js'
 import { PERF } from '../config/perf.js';
+import { SHEET } from '../config/baseline.js';
 
 export class ChannelListPane {
   constructor(net) {
@@ -77,7 +78,7 @@ export class ChannelListPane {
     this._off = events.on(EVT.CHAN_SNAPSHOT, (payload) => {
       if (!payload || payload.sessionId !== this.net.sessionId) return;
       this._lastSnapshot = Array.isArray(payload.items) ? payload.items : [];
-      if (!this._rafPending && PERF.CHANLIST_RAF_RENDER) {
+      if (!this._rafPending && this._perf.rafRender) {
         this._rafPending = true;
         requestAnimationFrame(() => {
           this._rafPending = false;
@@ -85,7 +86,7 @@ export class ChannelListPane {
           this.render();
           if (this.isLoading && this.items.length > 0) this.setLoading(false);
         });
-      } else if (!PERF.CHANLIST_RAF_RENDER) {
+      } else if (!this._perf.rafRender) {
         this.items = this._lastSnapshot;
         this.render();
         if (this.isLoading && this.items.length > 0) this.setLoading(false);
@@ -99,6 +100,31 @@ export class ChannelListPane {
       if (!channel || !channel.name) return;
       this.updateRow(channel.name, channel.users ?? 0, channel.topic ?? '');
     });
+
+    // Live PERF toggles (default to current PERF; fall back to sheet)
+    this._perf = {
+      rafRender: !!PERF.CHANLIST_RAF_RENDER,
+      renderCap: Number.isFinite(PERF.CHANLIST_RENDER_CAP) ? PERF.CHANLIST_RENDER_CAP : SHEET.perf.CHANLIST_RENDER_CAP,
+    };
+
+    // Listen for live perf changes
+    try {
+      api?.events?.on?.('settings:changed', (msg) => {
+        const perf = msg?.full?.perf ?? (msg?.domain === 'perf' ? msg.value : null);
+        if (!perf) return;
+        if (Object.prototype.hasOwnProperty.call(perf, 'CHANLIST_RAF_RENDER') || msg.path === 'CHANLIST_RAF_RENDER') {
+          this._perf.rafRender = !!(perf.CHANLIST_RAF_RENDER ?? SHEET.perf.CHANLIST_RAF_RENDER);
+        }
+        if (Object.prototype.hasOwnProperty.call(perf, 'CHANLIST_RENDER_CAP') || msg.path === 'CHANLIST_RENDER_CAP') {
+          const val = Number(perf.CHANLIST_RENDER_CAP ?? SHEET.perf.CHANLIST_RENDER_CAP);
+          this._perf.renderCap = Number.isFinite(val) ? val : SHEET.perf.CHANLIST_RENDER_CAP;
+          // If we're already showing a list, re-render to apply a new cap immediately
+          if (this.items?.length) this.render();
+        }
+      });
+    } catch (e) {
+      console.warn('[ChannelListPane] perf binding failed (non-fatal)', e);
+    }
   }
 
   mount(container) { container.appendChild(this.root); }
@@ -127,8 +153,8 @@ export class ChannelListPane {
   render() {
     let rows = this.items.slice().sort((a, b) => (b.users - a.users) || a.name.localeCompare(b.name));
     const total = rows.length;
-    if (PERF.CHANLIST_RENDER_CAP && rows.length > PERF.CHANLIST_RENDER_CAP) {
-      rows = rows.slice(0, PERF.CHANLIST_RENDER_CAP);
+    if (this._perf.renderCap && rows.length > this._perf.renderCap) {
+      rows = rows.slice(0, this._perf.renderCap);
       this.info.textContent = `Sorted by users (desc) - showing top ${rows.length} of ${total}`;
     } else {
       this.info.textContent = 'Sorted by users (desc)';

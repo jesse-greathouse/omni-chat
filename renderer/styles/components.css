@@ -117,9 +117,10 @@ select option { background: var(--surface); color: var(--fg); }
 .topic { margin: 0 0 var(--space-8) 0; font-size: 12px; color: var(--muted); }
 
 /* transcript base (shared) */
+/* base */
 .transcript {
-  position:relative;
-  min-height:0;
+  position: relative;
+  min-height: 0;
   padding-block: var(--pad-y);
   padding-inline: var(--pad-x);
   overflow: auto;
@@ -128,7 +129,12 @@ select option { background: var(--surface); color: var(--fg); }
   font-family: var(--font-mono);
   background: var(--transcript-bg);
 }
-.with-footer-gap { padding-bottom: calc(var(--footer-h) + var(--footer-gap)); }
+
+/* footer-aware variant */
+.transcript.with-footer-gap {
+  /* use logical end padding; include fallbacks so UI updates never collapse */
+  padding-block-end: calc(var(--footer-h, 40px) + var(--footer-gap, 6px));
+}
 
 /* bordered surface helper */
 .panel {
