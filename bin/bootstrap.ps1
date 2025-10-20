@@ -104,35 +104,51 @@ function Get-Arch() {
   }
 }
 
-# ---- Admin-elevated Defender exclusion helpers (temporary) -------------------
 function Add-DefenderExclusionAdmin([string]$Path) {
-  $cmd = "Try { Add-MpPreference -ExclusionPath `"$Path`" } Catch { Exit 1 }"
-  Start-Process -FilePath "powershell.exe" -Verb RunAs -Wait -ArgumentList @(
+  $cmd = @"
+try {
+  Add-MpPreference -ExclusionPath '$Path'
+  exit 0
+} catch {
+  exit 1
+}
+"@
+  $p = Start-Process -FilePath "powershell.exe" -Verb RunAs -Wait -PassThru -ArgumentList @(
     "-NoProfile","-ExecutionPolicy","Bypass","-Command",$cmd
   )
-  if ($LASTEXITCODE -ne 0) {
+  if ($p.ExitCode -ne 0) {
     throw "Could not add Defender exclusion (admin approval was denied or Add-MpPreference is unavailable)."
   }
 }
 
 function Remove-DefenderExclusionAdmin([string]$Path) {
-  $cmd = "Try { Remove-MpPreference -ExclusionPath `"$Path`" } Catch {}"
-  Start-Process -FilePath "powershell.exe" -Verb RunAs -Wait -ArgumentList @(
+  $cmd = @"
+try {
+  Remove-MpPreference -ExclusionPath '$Path'
+  exit 0
+} catch {
+  exit 0
+}
+"@
+  Start-Process -FilePath "powershell.exe" -Verb RunAs -Wait -PassThru -ArgumentList @(
     "-NoProfile","-ExecutionPolicy","Bypass","-Command",$cmd
   ) | Out-Null
 }
-# -----------------------------------------------------------------------------
 
 function Try-InstallPrebuilt([string]$Ver) {
   $Owner = "jesse-greathouse"
   $Repo  = "omni-irc"
   $Base  = "https://github.com/$Owner/$Repo/releases"
 
-  # Windows release assets are named with 'win64'
   $PlatCandidates = @("win64")
   $Arch          = Get-Arch
 
   $Root = Join-Path $env:LOCALAPPDATA "omni-irc\pkg"
+  # ensure the root exists right now
+  if (-not (Test-Path -LiteralPath $Root)) {
+    New-Item -ItemType Directory -Path $Root -Force | Out-Null
+  }
+
   $Tmp  = New-Item -ItemType Directory -Path ([System.IO.Path]::GetTempPath() + [System.Guid]::NewGuid()) -Force
 
   foreach ($plat in $PlatCandidates) {
@@ -146,38 +162,42 @@ function Try-InstallPrebuilt([string]$Ver) {
       Write-Host "[bootstrap] probe $($c.Url) -> $code"
       if ($code -ne 200 -and $code -ne 302) { continue }
 
-      # Explain to the user what is about to happen (unsigned binary path)
+      # --- NEW: pre-create the final install dir before UAC/exclusion ---
+      $Inst = Join-Path $Root $c.Label
+      if (-not (Test-Path -LiteralPath $Inst)) {
+        New-Item -ItemType Directory -Path $Inst -Force | Out-Null
+      }
+
       Write-Host ""
       Write-Host "──────────────────────────────────────────────────────────────────" -ForegroundColor Yellow
       Write-Host "Admin permission required:" -ForegroundColor Yellow
       Write-Host "This installer will download an UNSIGNED package from the internet." -ForegroundColor Yellow
       Write-Host "To allow this, we will add a Microsoft Defender exclusion" -ForegroundColor Yellow
-      Write-Host "for the download folder (you can remove it later or via uninstall)." -ForegroundColor Yellow
+      Write-Host "for the download *and* install folders (you can remove it later)." -ForegroundColor Yellow
       Write-Host "You'll see a UAC prompt now." -ForegroundColor Yellow
       Write-Host "──────────────────────────────────────────────────────────────────" -ForegroundColor Yellow
       Write-Host ""
 
-      # Add temporary exclusion (elevated)
+      # Add temporary exclusions (elevated) — for BOTH paths that now exist
       try {
         Add-DefenderExclusionAdmin -Path $Tmp.FullName
+        Add-DefenderExclusionAdmin -Path $Inst
       } catch {
         Write-Warning $_.Exception.Message
-        Write-Warning "Falling back to source build."
-        Remove-Item -LiteralPath $Tmp.FullName -Recurse -Force -ErrorAction SilentlyContinue
-        return $false
+        Write-Warning "Proceeding without a Defender exclusion (download may be slower)."
+        # continue; do not return
       }
 
       Write-Host "[bootstrap] fetching prebuilt client: $($c.Url)"
       $Zip = Join-Path $Tmp.FullName "pkg.zip"
       $downloadOk = $false
-
       try {
         Download-File $c.Url $Zip
         $downloadOk = $true
       } catch {
         Write-Warning ("[bootstrap] Download failed: {0}" -f $_.Exception.Message)
       } finally {
-        # Remove the exclusion as soon as download is done
+        # Optional: remove only the TEMP exclusion immediately; keep $Inst until we’ve finished extraction/MOTW
         # try { Remove-DefenderExclusionAdmin -Path $Tmp.FullName } catch {}
       }
 
@@ -187,13 +207,13 @@ function Try-InstallPrebuilt([string]$Ver) {
         return $false
       }
 
-      # Clear MOTW on the ZIP first to avoid propagation on extraction
+      # Clear MOTW on the ZIP first
       Clear-Motw $Zip
 
-      $Inst = Join-Path $Root $c.Label
+      # Expand into the pre-created $Inst
       Expand-ZipTo $Zip $Inst
 
-      # Clear MOTW on all extracted files (EXE + DLLs + anything else)
+      # Clear MOTW on extracted files
       Clear-Motw $Inst
 
       # normalize -> <inst>\bin\omni-irc-client.exe
@@ -209,14 +229,12 @@ function Try-InstallPrebuilt([string]$Ver) {
         $found = Get-ChildItem -Path $Inst -Filter "omni-irc-client.exe" -Recurse -ErrorAction SilentlyContinue |
                  Select-Object -First 1 | ForEach-Object { $_.FullName }
       }
-      if (-not $found) {
-        throw "omni-irc-client.exe not found in extracted package."
-      }
+      if (-not $found) { throw "omni-irc-client.exe not found in extracted package." }
 
       $destExe = Join-Path $BinDir "omni-irc-client.exe"
       Copy-Item -Force $found $destExe
 
-      # Clear MOTW on the normalized copy and adjacent DLLs
+      # Clear MOTW on normalized copy and adjacent DLLs
       Clear-Motw $destExe
       Get-ChildItem -LiteralPath $BinDir -Filter *.dll -ErrorAction SilentlyContinue | ForEach-Object {
         Clear-Motw $_.FullName
@@ -224,6 +242,11 @@ function Try-InstallPrebuilt([string]$Ver) {
 
       $env:OMNI_IRC_CLIENT = $destExe
       Write-Host "[bootstrap] using prebuilt binary at $env:OMNI_IRC_CLIENT"
+
+      # Optional: now remove BOTH exclusions
+      # try { Remove-DefenderExclusionAdmin -Path $Tmp.FullName } catch {}
+      # try { Remove-DefenderExclusionAdmin -Path $Inst } catch {}
+
       Remove-Item -LiteralPath $Tmp.FullName -Recurse -Force -ErrorAction SilentlyContinue
       return $true
     }

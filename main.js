@@ -81,7 +81,16 @@ function enableContextMenu(win) {
     menu.popup({ window: win });
   });
 }
-
+function whereFirst(name) {
+  try {
+    const out = spawnSync('where', [name], { encoding: 'utf8', windowsHide: true });
+    if (out.status === 0) {
+      const p = (out.stdout || '').split(/\r?\n/).find(Boolean);
+      if (p && fs.existsSync(p.trim())) return p.trim();
+    }
+  } catch {}
+  return null;
+}
 /** Back-compat shim for old & new console-message signatures. */
 function onConsoleMessage(wc, tag) {
   wc.on('console-message', (_e, a2, a3, a4, a5) => {
@@ -490,7 +499,12 @@ async function getFreePort() {
 
 async function resolveOmniIrcClientPath(env) {
   const exeName = isWin ? 'omni-irc-client.exe' : 'omni-irc-client';
-  if (process.env.OMNI_IRC_CLIENT) return process.env.OMNI_IRC_CLIENT;
+  if (process.env.OMNI_IRC_CLIENT && fs.existsSync(process.env.OMNI_IRC_CLIENT)) return process.env.OMNI_IRC_CLIENT;
+
+  if (isWin) {
+    const fromWhere = whereFirst(exeName);
+    if (fromWhere) return fromWhere;
+  }
 
   try {
     const guess = path.resolve(app.getAppPath(), '..', 'omni-irc', '_build', 'install', 'default', 'bin', exeName);
@@ -512,7 +526,7 @@ async function resolveOmniIrcClientPath(env) {
     }
   } catch (e) { console.warn('[resolveOmniIrcClientPath opam var bin]', e); }
 
-  return exeName;
+  return null;
 }
 
 async function ensureClientBinary() {
@@ -546,7 +560,7 @@ async function ensureClientBinary() {
 async function backendReady() {
   try {
     const { env, exe } = await ensureClientBinary();
-    const res = spawnSync(exe, ['--version'], { env, windowsHide: true, encoding: 'utf8' });
+    const res = spawnSync(exe, ['--help'], { env, windowsHide: true, encoding: 'utf8' });
     if (res.status === 0) return true;
     const s = (res.stdout || '') + (res.stderr || '');
     return /omni-irc/i.test(s);
