@@ -71,6 +71,7 @@ my $xdg_cache = $ENV{XDG_CACHE_HOME} && length $ENV{XDG_CACHE_HOME}
               : "$ENV{HOME}/.cache";
 my $opam_cache  = "$xdg_cache/opam";
 my $omni_cache  = "$xdg_cache/omni-irc/src";
+my $omni_pkgs   = "$ENV{HOME}/.local/omni-irc/pkg";
 
 print "Uninstalling OPAM data for this user...\n";
 print "Detected OPAM root: $root\n";
@@ -110,6 +111,13 @@ if (-d $omni_cache) {
   rm_tree($omni_cache);
 } else {
   print "omni-irc cache not found (nothing to remove): $omni_cache\n";
+}
+
+# 5) Remove prebuilt omni-irc packages (if installed)
+if (-d $omni_pkgs) {
+  rm_tree($omni_pkgs);
+} else {
+  print "omni-irc prebuilt packages not found (nothing to remove): $omni_pkgs\n";
 }
 
 print "\nHard reset complete.\n";

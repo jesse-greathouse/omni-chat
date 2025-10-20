@@ -10,6 +10,7 @@ $ErrorActionPreference = "Stop"
 # 0) Paths we’ll wipe
 $Root    = Join-Path $env:LOCALAPPDATA "opam"
 $OmniSrc = Join-Path $env:LOCALAPPDATA "omni-irc\src"
+$OmniPkg = Join-Path $env:LOCALAPPDATA "omni-irc\pkg"
 $Legacy  = @("$env:APPDATA\opam", "$env:USERPROFILE\.opam")  # in case of old installs
 
 # 1) Kill likely locking processes (ignore errors if not running)
@@ -51,6 +52,12 @@ if (Test-Path $Root) {
 if (Test-Path $OmniSrc) {
   Write-Host "Removing cached omni-irc sources: $OmniSrc"
   Remove-Item -LiteralPath $OmniSrc -Recurse -Force
+}
+
+# remove prebuilt packages
+if (Test-Path $OmniPkg) {
+  Write-Host "Removing prebuilt omni-irc packages: $OmniPkg"
+  Remove-Item -LiteralPath $OmniPkg -Recurse -Force
 }
 
 # 6) (Optional) delete legacy opam dirs if they exist

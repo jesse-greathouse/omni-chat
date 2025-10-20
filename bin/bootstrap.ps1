@@ -1,13 +1,237 @@
 param(
   [string]$Switch     = "omni-irc-dev",
   [string]$Repo       = "https://github.com/jesse-greathouse/omni-irc",
-  [string]$Rev        = "0.1.15", # locked tag
+  [string]$Rev        = "0.1.18", # preferred tag for prebuilt assets
   [string]$OcamlHint  = "5.3.0",  # preferred OCaml if available
   [ValidateSet("auto","mingw","msvc")]
   [string]$Toolchain  = "mingw"   # default to mingw on Windows; override if you must
 )
 
 $ErrorActionPreference = "Stop"
+
+function Test-HttpUrl([string]$Url) {
+  try {
+    $r = Invoke-WebRequest -Method Head -Uri $Url -MaximumRedirection 5 -UseBasicParsing -Headers @{ "User-Agent"="omni-irc-bootstrap" }
+    return $r.StatusCode
+  } catch {
+    if ($_.Exception.Response) { return [int]$_.Exception.Response.StatusCode }
+    return 0
+  }
+}
+
+function Download-File([string]$Url, [string]$Dest) {
+  Invoke-WebRequest -Uri $Url -OutFile $Dest -UseBasicParsing -Headers @{ "User-Agent"="omni-irc-bootstrap" }
+}
+
+function Expand-ZipTo([string]$ZipPath, [string]$DestDir) {
+  if (-not (Test-Path $DestDir)) { New-Item -ItemType Directory -Path $DestDir | Out-Null }
+  Expand-Archive -Path $ZipPath -DestinationPath $DestDir -Force
+}
+
+# Robust MOTW clearing (EXEs, DLLs, any file)
+function Clear-Motw {
+  param(
+    [Parameter(Mandatory, ValueFromPipeline, ValueFromPipelineByPropertyName)]
+    [string[]]$Paths
+  )
+  begin {
+    $haveStreamParam = $false
+    try {
+      $def = (Get-Command Get-Item).Parameters['Stream']
+      if ($def) { $haveStreamParam = $true }
+    } catch { $haveStreamParam = $false }
+
+    $unblock = { param($p)
+      try { Unblock-File -LiteralPath $p -ErrorAction SilentlyContinue } catch {}
+      if ($haveStreamParam) {
+        try { Remove-Item -LiteralPath $p -Stream Zone.Identifier -Force -ErrorAction SilentlyContinue } catch {}
+      }
+    }
+  }
+  process {
+    foreach ($p in $Paths) {
+      if (-not (Test-Path -LiteralPath $p)) { continue }
+      $item = Get-Item -LiteralPath $p -ErrorAction SilentlyContinue
+      if (-not $item) { continue }
+      if ($item.PSIsContainer) {
+        Get-ChildItem -LiteralPath $p -Recurse -File -Force -ErrorAction SilentlyContinue |
+          ForEach-Object { & $unblock $_.FullName }
+      } else {
+        & $unblock $item.FullName
+      }
+    }
+  }
+}
+
+function Resolve-ReleaseRef([string]$RepoUrl, [string]$Rev) {
+  $candidates = @()
+  if ($Rev -match '^\d') { $candidates += "v$Rev" }  # prefer vX.Y.Z if Rev is numeric
+  $candidates += $Rev
+
+  foreach ($cand in $candidates) {
+    $out = git ls-remote --tags --refs $RepoUrl "refs/tags/$cand" 2>$null
+    if ($LASTEXITCODE -eq 0 -and $out) { return @{ kind="tag"; name=$cand } }
+  }
+  foreach ($cand in $candidates) {
+    $out = git ls-remote --heads $RepoUrl "refs/heads/$cand" 2>$null
+    if ($LASTEXITCODE -eq 0 -and $out) { return @{ kind="head"; name=$cand } }
+  }
+  throw "Could not find tag or branch for '$Rev' (tried: $($candidates -join ', '))."
+}
+
+function Clone-Or-Update-Shallow([string]$RepoUrl, [hashtable]$Ref, [string]$DestDir) {
+  if (-not (Test-Path (Split-Path $DestDir -Parent))) {
+    New-Item -ItemType Directory -Path (Split-Path $DestDir -Parent) | Out-Null
+  }
+  if (-not (Test-Path $DestDir)) {
+    git clone --depth 1 --branch $Ref.name $RepoUrl $DestDir | Out-Host
+  } else {
+    Write-Host "Reusing $DestDir"
+    git -C $DestDir fetch --depth 1 --tags origin $Ref.name | Out-Host
+    if ($Ref.kind -eq 'tag') {
+      git -C $DestDir checkout --force "refs/tags/$Ref.name" | Out-Host
+    } else {
+      git -C $DestDir checkout --force $Ref.name | Out-Host
+    }
+    git -C $DestDir reset --hard --quiet | Out-Host
+  }
+}
+
+function Get-Arch() {
+  switch ($env:PROCESSOR_ARCHITECTURE) {
+    "ARM64" { "arm64"; break }
+    default { "x64" }
+  }
+}
+
+# ---- Admin-elevated Defender exclusion helpers (temporary) -------------------
+function Add-DefenderExclusionAdmin([string]$Path) {
+  $cmd = "Try { Add-MpPreference -ExclusionPath `"$Path`" } Catch { Exit 1 }"
+  Start-Process -FilePath "powershell.exe" -Verb RunAs -Wait -ArgumentList @(
+    "-NoProfile","-ExecutionPolicy","Bypass","-Command",$cmd
+  )
+  if ($LASTEXITCODE -ne 0) {
+    throw "Could not add Defender exclusion (admin approval was denied or Add-MpPreference is unavailable)."
+  }
+}
+
+function Remove-DefenderExclusionAdmin([string]$Path) {
+  $cmd = "Try { Remove-MpPreference -ExclusionPath `"$Path`" } Catch {}"
+  Start-Process -FilePath "powershell.exe" -Verb RunAs -Wait -ArgumentList @(
+    "-NoProfile","-ExecutionPolicy","Bypass","-Command",$cmd
+  ) | Out-Null
+}
+# -----------------------------------------------------------------------------
+
+function Try-InstallPrebuilt([string]$Ver) {
+  $Owner = "jesse-greathouse"
+  $Repo  = "omni-irc"
+  $Base  = "https://github.com/$Owner/$Repo/releases"
+
+  # Windows release assets are named with 'win64'
+  $PlatCandidates = @("win64")
+  $Arch          = Get-Arch
+
+  $Root = Join-Path $env:LOCALAPPDATA "omni-irc\pkg"
+  $Tmp  = New-Item -ItemType Directory -Path ([System.IO.Path]::GetTempPath() + [System.Guid]::NewGuid()) -Force
+
+  foreach ($plat in $PlatCandidates) {
+    $candidates = @(
+      @{ Label="latest"; Url="$Base/latest/download/omni-irc-client-$plat-$Arch.zip" },
+      @{ Label="v$Ver" ; Url="$Base/download/v$Ver/omni-irc-client-$Ver-$plat-$Arch.zip" }
+    )
+
+    foreach ($c in $candidates) {
+      $code = Test-HttpUrl $c.Url
+      Write-Host "[bootstrap] probe $($c.Url) -> $code"
+      if ($code -ne 200 -and $code -ne 302) { continue }
+
+      # Explain to the user what is about to happen (unsigned binary path)
+      Write-Host ""
+      Write-Host "──────────────────────────────────────────────────────────────────" -ForegroundColor Yellow
+      Write-Host "Admin permission required:" -ForegroundColor Yellow
+      Write-Host "This installer will download an UNSIGNED package from the internet." -ForegroundColor Yellow
+      Write-Host "To allow this, we will add a Microsoft Defender exclusion" -ForegroundColor Yellow
+      Write-Host "for the download folder (you can remove it later or via uninstall)." -ForegroundColor Yellow
+      Write-Host "You'll see a UAC prompt now." -ForegroundColor Yellow
+      Write-Host "──────────────────────────────────────────────────────────────────" -ForegroundColor Yellow
+      Write-Host ""
+
+      # Add temporary exclusion (elevated)
+      try {
+        Add-DefenderExclusionAdmin -Path $Tmp.FullName
+      } catch {
+        Write-Warning $_.Exception.Message
+        Write-Warning "Falling back to source build."
+        Remove-Item -LiteralPath $Tmp.FullName -Recurse -Force -ErrorAction SilentlyContinue
+        return $false
+      }
+
+      Write-Host "[bootstrap] fetching prebuilt client: $($c.Url)"
+      $Zip = Join-Path $Tmp.FullName "pkg.zip"
+      $downloadOk = $false
+
+      try {
+        Download-File $c.Url $Zip
+        $downloadOk = $true
+      } catch {
+        Write-Warning ("[bootstrap] Download failed: {0}" -f $_.Exception.Message)
+      } finally {
+        # Remove the exclusion as soon as download is done
+        # try { Remove-DefenderExclusionAdmin -Path $Tmp.FullName } catch {}
+      }
+
+      if (-not $downloadOk -or -not (Test-Path $Zip)) {
+        Write-Warning "[bootstrap] Prebuilt download unavailable or blocked; falling back to source build."
+        Remove-Item -LiteralPath $Tmp.FullName -Recurse -Force -ErrorAction SilentlyContinue
+        return $false
+      }
+
+      # Clear MOTW on the ZIP first to avoid propagation on extraction
+      Clear-Motw $Zip
+
+      $Inst = Join-Path $Root $c.Label
+      Expand-ZipTo $Zip $Inst
+
+      # Clear MOTW on all extracted files (EXE + DLLs + anything else)
+      Clear-Motw $Inst
+
+      # normalize -> <inst>\bin\omni-irc-client.exe
+      $BinDir = Join-Path $Inst "bin"
+      if (-not (Test-Path $BinDir)) { New-Item -ItemType Directory -Path $BinDir | Out-Null }
+
+      $found = @(
+        (Join-Path $Inst "omni-irc-client.exe"),
+        (Join-Path $Inst "bin\omni-irc-client.exe")
+      ) | Where-Object { Test-Path $_ } | Select-Object -First 1
+
+      if (-not $found) {
+        $found = Get-ChildItem -Path $Inst -Filter "omni-irc-client.exe" -Recurse -ErrorAction SilentlyContinue |
+                 Select-Object -First 1 | ForEach-Object { $_.FullName }
+      }
+      if (-not $found) {
+        throw "omni-irc-client.exe not found in extracted package."
+      }
+
+      $destExe = Join-Path $BinDir "omni-irc-client.exe"
+      Copy-Item -Force $found $destExe
+
+      # Clear MOTW on the normalized copy and adjacent DLLs
+      Clear-Motw $destExe
+      Get-ChildItem -LiteralPath $BinDir -Filter *.dll -ErrorAction SilentlyContinue | ForEach-Object {
+        Clear-Motw $_.FullName
+      }
+
+      $env:OMNI_IRC_CLIENT = $destExe
+      Write-Host "[bootstrap] using prebuilt binary at $env:OMNI_IRC_CLIENT"
+      Remove-Item -LiteralPath $Tmp.FullName -Recurse -Force -ErrorAction SilentlyContinue
+      return $true
+    }
+  }
+
+  Write-Host "[bootstrap] no matching prebuilt asset found; falling back to opam build."
+  return $false
+}
 
 function Test-Tool($name) {
   if (-not (Get-Command $name -ErrorAction SilentlyContinue)) {
@@ -44,13 +268,27 @@ Test-Tool opam
 Test-Tool git
 
 # clear inherited env that might confuse opam
-if (Test-Path Env:OPAMSWITCH) { Write-Host ("Ignoring inherited OPAMSWITCH={0}" -f $env:OPAMSWITCH); Remove-Item Env:OPAMSWITCH -ErrorAction SilentlyContinue }
-foreach ($v in 'OCAMLLIB','OCAMLPATH','CAML_LD_LIBRARY_PATH','CAML_LD_LIBRARY_PATH__F',
-              'OCAML_TOPLEVEL_PATH','FLEXLINKFLAGS','FLEXDLL_CHAIN','MAKE','MAKEFLAGS','CC') {
-  if (Test-Path "Env:$v") { Remove-Item "Env:$v" -ErrorAction SilentlyContinue }
+if (Test-Path Env:OPAMSWITCH) {
+  if ($env:OPAMSWITCH) {
+    Write-Host ("Ignoring inherited OPAMSWITCH={0}" -f $env:OPAMSWITCH)
+  } else {
+    Write-Host "Ignoring inherited OPAMSWITCH (empty)"
+  }
+  Remove-Item Env:OPAMSWITCH -ErrorAction SilentlyContinue
 }
 
-# opam root & repo
+# Try prebuilt first; if available, skip opam
+if (Try-InstallPrebuilt $Rev) {
+  & $env:OMNI_IRC_CLIENT --help
+  Write-Host ""
+  Write-Host "Done. OMNI_IRC_CLIENT=$env:OMNI_IRC_CLIENT"
+  Write-Host "*******************************************************************" -ForegroundColor Green
+  Write-Host "*  Omni-IRC bootstrap is COMPLETE (prebuilt). You can close now.  *" -ForegroundColor Green
+  Write-Host "*******************************************************************" -ForegroundColor Green
+  return
+}
+
+# ----------------------------- opam path (fallback) ---------------------------
 $Root = Join-Path $env:LOCALAPPDATA "opam"
 if (-not (Test-Path $Root)) { New-Item -ItemType Directory -Path $Root | Out-Null }
 $env:OPAMROOT = $Root
@@ -62,7 +300,6 @@ if (-not (Test-Path (Join-Path $Root "config"))) {
 
 # repo check/add (handles stale dir)
 $repoDir = Join-Path (Join-Path $Root 'repo') 'default'
-# ask opam which repos are known for this root (may be empty if no switch selected)
 $reposRaw = ''
 try { $reposRaw = Invoke-OpamNoSwitch repo list --root "$Root" --short 2>$null } catch { $reposRaw = '' }
 $haveDefaultListed = (($reposRaw -split "`r?`n") -contains 'default')
@@ -92,7 +329,6 @@ if (-not $haveDefaultListed) {
 Write-Host "Updating opam package index…"
 Invoke-OpamNoSwitch update --root "$Root"
 
-# Decide toolchain ladder
 function New-Switch([string]$sw,[string[]]$candidates) {
   foreach ($spec in $candidates) {
     Write-Host (" → trying package set: {0}" -f $spec)
@@ -112,22 +348,16 @@ if (-not $haveSwitch) {
 
   $want = $Toolchain
   if ($want -eq "auto") {
-    if ($IsWindows) {
-      $want = "mingw"
-    } else {
-      $want = "auto"
-    }
+    if ($IsWindows) { $want = "mingw" } else { $want = "auto" }
   }
 
   $candidates = New-Object System.Collections.Generic.List[string]
-
   if ($want -eq "msvc") {
     if ($OcamlHint) { $candidates.Add("ocaml-compiler.$OcamlHint,system-msvc,ocaml-env-msvc64") }
     $candidates.Add("ocaml-compiler.5.2.1,system-msvc,ocaml-env-msvc64")
     $candidates.Add("ocaml-base-compiler,system-msvc,ocaml-env-msvc64")
     Write-Warning "MSVC selected. Note: TLS/zarith often fails without a MSVC-built GMP/MPIR."
   } else {
-    # mingw (default on Windows)
     if ($OcamlHint) { $candidates.Add("ocaml-compiler.$OcamlHint,system-mingw,ocaml-env-mingw64,mingw-w64-shims") }
     $candidates.Add("ocaml-compiler.5.2.1,system-mingw,ocaml-env-mingw64,mingw-w64-shims")
     $candidates.Add("ocaml-base-compiler,system-mingw,ocaml-env-mingw64,mingw-w64-shims")
@@ -157,32 +387,30 @@ try {
   }
 } catch {}
 
-# fetch omni-irc sources at locked tag
+# fetch omni-irc sources at locked tag/branch (shallow, tag-aware)
 $SrcRoot = Join-Path $env:LOCALAPPDATA "omni-irc\src"
 $SrcDir  = Join-Path $SrcRoot ("omni-irc-" + $Rev)
 if (-not (Test-Path $SrcRoot)) { New-Item -ItemType Directory -Path $SrcRoot | Out-Null }
 
-if (-not (Test-Path $SrcDir)) {
-  Write-Host "Cloning $Repo @ $Rev → $SrcDir"
-  git clone --depth 1 --branch $Rev $Repo $SrcDir | Out-Host
-} else {
-  Write-Host "Reusing $SrcDir"
-  git -C $SrcDir fetch --tags --depth 1 origin $Rev | Out-Host
-  git -C $SrcDir checkout --force $Rev | Out-Host
-  git -C $SrcDir reset --hard --quiet | Out-Host
+try {
+  $ref = Resolve-ReleaseRef -RepoUrl $Repo -Rev $Rev
+  $pretty = ($ref.kind -eq 'tag') ? "tag $($ref.name)" : "branch $($ref.name)"
+  Write-Host "Cloning $Repo @ $pretty → $SrcDir"
+  Clone-Or-Update-Shallow -RepoUrl $Repo -Ref $ref -DestDir $SrcDir
+} catch {
+  throw $_
 }
 
 # toolchain helpers (common)
 Invoke-Opam install --root "$Root" --switch $Switch dune ocamlfind
 
-# Pin ALL packages in the monorepo so opam can resolve cross-deps like omni-irc-conn
+# Pin ALL packages in the monorepo
 $opamFiles = Get-ChildItem -LiteralPath $SrcDir -Filter '*.opam' -File -ErrorAction SilentlyContinue
 if (-not $opamFiles) {
   Write-Warning "No .opam files found in $SrcDir. Ensure they are present (or generated)."
 } else {
-  # skip Windows-unavailable packages
   $allNames   = $opamFiles | ForEach-Object { $_.BaseName } | Sort-Object -Unique
-  $skipByName = @('omni-irc-ui-notty','omni-irc-io-unixsock')  # explicitly not for Win32
+  $skipByName = @('omni-irc-ui-notty','omni-irc-io-unixsock')  # not for Win32
 
   if ($IsWindows) {
     $pkgNames =
@@ -208,17 +436,13 @@ if (-not $opamFiles) {
     Write-Host (" → pinning {0}" -f $pkg)
     Invoke-Opam pin add --root "$Root" --switch $Switch -k path --no-action $pkg $SrcDir
   }
-
-  # show what’s pinned
   Invoke-Opam pin list --root "$Root" --switch $Switch
 }
 
-
-# WORKAROUND: omni-irc-ui.loopback needs yojson but the opam for omni-irc-ui may not declare it.
-# Install yojson up-front so the build doesn't fail on missing library.
+# Extra dep
 Invoke-Opam install --root "$Root" --switch $Switch yojson
 
-# Finally, install the client (this pulls TLS + friends on non-win32-only packages)
+# Install the client
 Invoke-Opam install --root "$Root" --switch $Switch omni-irc-client
 
 # report
