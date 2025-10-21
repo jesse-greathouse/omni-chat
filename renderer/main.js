@@ -111,23 +111,68 @@ function mountProfilesPanel(layerEl) {
       renderTabs();
       activateNetwork(net.id);
 
-      // 2) start this tab’s session
+      // Start this tab’s session
       try {
-      console.log('[connect] starting session', activeSessionId, opts);
-      const p = api.sessions.start(activeSessionId, opts);
-      const withTimeout = Promise.race([
-        p,
-        new Promise((_, rej) => setTimeout(() => rej(new Error('session:start timeout (10s)')), 10_000))
-      ]);
-      await withTimeout;
-      console.log('[connect] session started', activeSessionId);
+        const o = (opts && typeof opts === 'object') ? opts : {};
+        const sessionId = activeSessionId ?? '<?>';// keep whatever your caller passed, but guard it
+
+        const server   = o.server ?? '<unknown>';
+        const port     = (o.ircPort ?? o.port ?? '');
+        const tlsFlag  = o.tls ? '(TLS)' : '';
+        const nick     = o.nick ?? '—';
+        const realname = o.realname ?? '—';
+        const authType = o.authType ?? 'none';
+        const authUser = o.authUsername ?? '';
+
+        console.log(
+          `[connect] Starting session ${sessionId}\n` +
+          `  Server:   ${server}${port ? `:${port}` : ''} ${tlsFlag}\n` +
+          `  Nick:     ${nick}\n` +
+          `  Realname: ${realname}\n` +
+          `  Auth:     ${authType}${authUser ? ` (${authUser})` : ''}`
+        );
+
+        // Kick off the session with sanitized inputs
+        const startPromise = Promise.resolve().then(() => api.sessions.start(sessionId, o));
+
+        // Implement a cancellable timeout
+        let timer;
+        const timeoutPromise = new Promise((_, rej) => {
+          timer = setTimeout(() => rej(new Error('session:start timeout (10s)')), 10_000);
+        });
+
+        // Race start vs timeout, and clear the timer once one settles
+        const result = await Promise.race([startPromise, timeoutPromise])
+          .finally(() => { try { clearTimeout(timer); } catch {} });
+
+        // Pretty "session started" line
+        {
+          const r = (result && typeof result === 'object') ? result : {};
+          const startedId = sessionId ?? r.id ?? '<?>';
+          const socket    = r.socket ?? r.addr ?? r.endpoint ?? '';
+
+          const extras = [];
+          if (r.server) extras.push(`Server:   ${r.server}`);
+          if (r.nick)   extras.push(`Nick:     ${r.nick}`);
+          if (typeof r.tls === 'boolean') extras.push(`TLS:      ${r.tls ? 'yes' : 'no'}`);
+
+          console.log(
+            `[connect] Session started ${startedId}\n` +
+            (socket ? `  Socket:   ${socket}\n` : '') +
+            (extras.length ? `  ${extras.join('\n  ')}\n` : '')
+          );
+        }
+
         // Success → remove the form in *all* cases so it doesn't overlay chat input.
         try { panel.remove(); } catch (e) { console.error('[connect] remove overlay after success', e); }
+
       } catch (e) {
-        console.error(`[session start failed][${activeSessionId}]`, e);
+        console.error(`[session start failed][${activeSessionId ?? '<?>'}]`, e);
         // If we hid the overlay for an existing connection, put it back so the
         // user can retry. (In a new tab, the form was never removed.)
-        if (hadExistingNet) { try { layerEl.prepend(panel); } catch (err) { console.error('[connect] restore overlay', err); } }
+        if (hadExistingNet) {
+          try { layerEl.prepend(panel); } catch (err) { console.error('[connect] restore overlay', err); }
+        }
       }
     }
   });
