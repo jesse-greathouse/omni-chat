@@ -520,31 +520,45 @@ async function getFreePort() {
 
 // Add this helper near resolveTool()
 function isExecFile(p) {
-  try { return !!(p && fs.existsSync(p) && fs.statSync(p).isFile() && (fs.statSync(p).mode & 0o111)); }
-  catch { return false; }
+  try {
+    if (!p || !fs.existsSync(p)) return false;
+    const st = fs.statSync(p);
+    if (!st.isFile()) return false;
+    // On Windows, don't require POSIX exec bits; .exe is executable by type.
+    if (process.platform === 'win32') return true;
+    return (st.mode & 0o111) !== 0;
+  } catch { return false; }
 }
 
 // Add this helper near resolveOmniIrcClientPath()
 function findLocalPrebuiltClient() {
-  const home = os.homedir();
-  const root = path.join(home, '.local', 'omni-irc', 'pkg');
-  if (!fs.existsSync(root)) return null;
+  const exeName = process.platform === 'win32' ? 'omni-irc-client.exe' : 'omni-irc-client';
+  // Search platform-appropriate roots (Windows uses %LOCALAPPDATA%)
+  const roots = [];
+  if (process.platform === 'win32') {
+    const la = process.env.LOCALAPPDATA;
+    if (la) roots.push(path.join(la, 'omni-irc', 'pkg'));
+    // also support legacy/fallback
+    roots.push(path.join(os.homedir(), '.local', 'omni-irc', 'pkg'));
+  } else {
+    roots.push(path.join(os.homedir(), '.local', 'omni-irc', 'pkg'));
+  }
 
-  // Prefer a 'current' pointer if you ever add one; otherwise pick the newest-looking dir
-  const entries = fs.readdirSync(root, { withFileTypes: true })
-    .filter(d => d.isDirectory())
-    .map(d => d.name)
-    .sort()            // lexicographic vX.Y.Z sorts OK if prefixed with 'v'; good enough here
-    .reverse();
-
-  for (const dir of entries) {
-    const bin = path.join(root, dir, 'bin', process.platform === 'win32' ? 'omni-irc-client.exe' : 'omni-irc-client');
-    if (isExecFile(bin)) return bin;
-
-    // Fallback: if an app bundle exists under this label, use its inner binary
-    const app = path.join(root, dir, 'Omni IRC Client.app');
-    const inner = path.join(app, 'Contents', 'MacOS', 'omni');
-    if (isExecFile(inner)) return inner;
+  for (const root of roots) {
+    if (!root || !fs.existsSync(root)) continue;
+    const entries = fs.readdirSync(root, { withFileTypes: true })
+      .filter(d => d.isDirectory())
+      .map(d => d.name)
+      .sort()
+      .reverse();
+    for (const dir of entries) {
+      const bin = path.join(root, dir, 'bin', exeName);
+      if (isExecFile(bin)) return bin;
+      // macOS app bundle fallback (ignored on Windows)
+      const app = path.join(root, dir, 'Omni IRC Client.app');
+      const inner = path.join(app, 'Contents', 'MacOS', 'omni');
+      if (isExecFile(inner)) return inner;
+    }
   }
   return null;
 }
