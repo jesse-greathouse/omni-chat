@@ -2,11 +2,9 @@
 use strict;
 use warnings;
 use Cwd qw(abs_path);
-use Digest::SHA qw(sha256_hex);
 use File::Basename qw(dirname);
 use File::Path qw(make_path remove_tree);
 use File::Find qw(find);
-use File::Glob qw(bsd_glob);
 use File::Spec;
 use File::Temp qw(tempdir);
 use POSIX qw(uname);
@@ -16,8 +14,8 @@ use POSIX qw(uname);
 # --------------------------
 my $SWITCH     = $ENV{OMNI_OCAML_SWITCH} // 'omni-irc-dev';
 my $REPO_URL   = $ENV{OMNI_IRC_REPO}    // 'https://github.com/jesse-greathouse/omni-irc';
-my $REV        = $ENV{OMNI_IRC_REV}     // '0.1.18';   # preferred tag/branch for prebuilt & sources
-my $OCAML_HINT = $ENV{OMNI_OCAML_HINT}  // '5.3.0';    # preferred OCaml version
+my $REV        = $ENV{OMNI_IRC_REV}     // '0.1.18';
+my $OCAML_HINT = $ENV{OMNI_OCAML_HINT}  // '5.3.0';
 
 $ENV{OPAMYES}  = '1';
 $ENV{OPAMROOT} = $ENV{OPAMROOT} // "$ENV{HOME}/.opam";
@@ -31,275 +29,285 @@ delete @ENV{qw(
 sub dief { printf STDERR shift, @_; exit 1 }
 
 # --------------------------
-# Resolve absolute tool paths
+# Tools
 # --------------------------
-sub _is_exec {
-  my ($p) = @_;
-  return unless defined $p && length $p;
-  return (-f $p && -x $p) ? $p : undef;
-}
-sub _join {
-  my ($dir, $cmd) = @_;
-  my $p = File::Spec->catfile($dir, $cmd);
-  return _is_exec($p);
-}
+sub _is_exec { my ($p)=@_; return (defined $p && length $p && -f $p && -x $p) ? $p : undef }
+sub _join    { my ($d,$c)=@_; my $p=File::Spec->catfile($d,$c); return _is_exec($p) }
 sub resolve_tool {
-  my ($name) = @_;
-  # 1) explicit env overrides
-  my @env_keys = (
-    uc($name) . '_EXE',              # e.g. OPAM_EXE, GIT_EXE
-    'OMNI_' . uc($name) . '_EXE',    # e.g. OMNI_OPAM_EXE, OMNI_GIT_EXE
-  );
-  for my $k (@env_keys) {
-    my $v = $ENV{$k};
-    if (my $p = _is_exec($v)) { return $p }
+  my ($name)=@_;
+  for my $k (uc($name).'_EXE', 'OMNI_'.uc($name).'_EXE') {
+    my $v=$ENV{$k}; if (my $p=_is_exec($v)) { return $p }
   }
-  # 2) PATH search (best effort; PATH may be minimal)
-  my $PATH = $ENV{PATH} // '';
-  for my $d (split /:/, $PATH) {
-    if (my $p = _join($d, $name)) { return $p }
-  }
-  # 3) common install prefixes (macOS/Homebrew, MacPorts, Linux user bin)
-  my @common = grep { defined && length } (
-    '/opt/homebrew/bin',     # Apple Silicon Homebrew
-    '/usr/local/bin',        # Intel mac + many Linux
-    '/opt/local/bin',        # MacPorts
-    "$ENV{HOME}/.local/bin", # Linux user installs
-    '/usr/bin',              # system
-  );
-  for my $d (@common) {
-    if (my $p = _join($d, $name)) { return $p }
+  for my $d (split /:/, ($ENV{PATH}//'')) { if (my $p=_join($d,$name)) { return $p } }
+  for my $d (grep {defined && length} ('/opt/homebrew/bin','/usr/local/bin','/opt/local/bin',"$ENV{HOME}/.local/bin",'/usr/bin')) {
+    if (my $p=_join($d,$name)) { return $p }
   }
   return undef;
 }
-
-my $OPAM = resolve_tool('opam')
-  or dief("opam not found. Set OPAM_EXE to its full path (e.g., /opt/homebrew/bin/opam) and re-run.\n");
-my $GIT  = resolve_tool('git')
-  or dief("git not found. Set GIT_EXE to its full path and re-run.\n");
+my $OPAM = resolve_tool('opam') or dief("opam not found. Set OPAM_EXE to its full path and re-run.\n");
+my $GIT  = resolve_tool('git')  or dief("git not found. Set GIT_EXE to its full path and re-run.\n");
 
 sub run {
-  my (@cmd) = @_;
-  system @cmd;
-  my $code = $? >> 8;
-  $code == 0 or dief("Command failed (%d): %s\n", $code, join(' ', map { /\s/ ? "'$_'" : $_ } @cmd));
+  my (@cmd)=@_; system @cmd; my $code=$?>>8;
+  $code==0 or dief("Command failed (%d): %s\n", $code, join(' ', map { /\s/ ? "'$_'" : $_ } @cmd));
 }
 sub capture {
-  my (@cmd) = @_;
-  open my $fh, "-|", @cmd or dief("Failed to spawn: %s\n", join(' ', @cmd));
-  local $/;
-  my $out = <$fh>;
-  close $fh;
-  my $code = $? >> 8;
-  $code == 0 or dief("Command failed (%d): %s\n", $code, join(' ', @cmd));
-  return $out;
+  my (@cmd)=@_; open my $fh, "-|", @cmd or dief("Failed to spawn: %s\n", join(' ',@cmd));
+  local $/; my $out=<$fh>; close $fh; my $code=$?>>8;
+  $code==0 or dief("Command failed (%d): %s\n", $code, join(' ',@cmd)); return $out;
 }
-
-sub which {
-  my ($exe) = @_; for my $d (split /:/, ($ENV{PATH}||'')) { my $p = "$d/$exe"; return $p if -x $p }
-  return undef;
+sub which { my ($exe)=@_; for my $d (split /:/, ($ENV{PATH}||'')) { my $p="$d/$exe"; return $p if -x $p } return undef }
+sub curl_or_wget { return which('curl') ? 'curl' : (which('wget') ? 'wget' : undef) }
+sub http_head_ok {
+  my ($url)=@_; my $t=curl_or_wget() or return undef;
+  if ($t eq 'curl') { my $o=`curl -Is -o /dev/null -w "%{http_code}" "$url" 2>/dev/null`; chomp $o; return ($o eq '200' || $o eq '302') ? 1 : 0 }
+  system("wget -q --spider \"$url\""); return (($?>>8)==0) ? 1 : 0;
 }
-
-sub curl_or_wget {
-  return (which('curl') ? 'curl' : (which('wget') ? 'wget' : undef));
-}
-
-sub http_head_302_or_404 {
-  my ($url) = @_;
-  my $tool = curl_or_wget() or return undef;
-  if ($tool eq 'curl') {
-    my $out = `curl -Is -o /dev/null -w "%{http_code}" "$url" 2>/dev/null`; chomp $out; return $out;
-  } else {
-    system("wget -q --spider \"$url\""); my $code = $? >> 8;
-    return $code == 0 ? "200" : "404";
-  }
-}
-
 sub http_download {
-  my ($url, $dest) = @_;
-  my $tool = curl_or_wget() or dief("Need curl or wget to download assets\n");
-  if ($tool eq 'curl') {
-    system('curl', '-fL', '-o', $dest, $url) == 0 or dief("Download failed: %s\n", $url);
-  } else {
-    system('wget', '-O', $dest, $url) == 0 or dief("Download failed: %s\n", $url);
-  }
+  my ($url,$dest)=@_; my $t=curl_or_wget() or dief("Need curl or wget to download assets\n");
+  if ($t eq 'curl') { system('curl','-fL','-o',$dest,$url)==0 or dief("Download failed: %s\n",$url) }
+  else              { system('wget','-O',$dest,$url)==0       or dief("Download failed: %s\n",$url) }
 }
-
-sub unzip_to {
-  my ($zip, $dest) = @_;
-  mkdir $dest unless -d $dest;
-  system('unzip', '-oq', $zip, '-d', $dest) == 0 or dief("unzip failed for %s\n", $zip);
-}
+sub unzip_to { my ($zip,$dest)=@_; mkdir $dest unless -d $dest; system('unzip','-oq',$zip,'-d',$dest)==0 or dief("unzip failed: %s\n",$zip) }
 
 sub os_arch {
-  my ($sysname, $nodename, $release, $version, $machine) = uname();
+  my (undef,undef,undef,undef,$machine)=uname();
   my $plat = $^O eq 'darwin' ? 'macos' : 'linux';
   my $arch = ($machine =~ /arm64|aarch64/i) ? 'arm64' : 'x64';
-  return ($plat, $arch);
+  return ($plat,$arch);
 }
 
 # --------------------------
-# Gatekeeper/MOTW parity
+# Gatekeeper parity
 # --------------------------
 sub have_xattr { return which('xattr') ? 1 : 0 }
-
-sub prompt_yes_no {
-  my ($msg, $default_yes) = @_;
-  my $def = $default_yes ? 'Y/n' : 'y/N';
-  print "$msg [$def]: ";
-  my $ans = <STDIN>;
-  return $default_yes unless defined $ans;
-  chomp $ans; $ans =~ s/^\s+|\s+$//g;
-  return 1 if $ans =~ /^(y|yes)$/i;
-  return 0 if $ans =~ /^(n|no)$/i;
-  return $default_yes;
-}
-
 sub macos_clear_quarantine_recursively {
-  my ($path) = @_;
-  return unless $^O eq 'darwin';
-  return unless have_xattr();
-
-  my $auto = $ENV{OMNI_AUTO_UNQUARANTINE} // 1;
-  my $doit = 0;
-  if ($auto) {
-    $doit = 1;
+  my ($path)=@_; return unless $^O eq 'darwin'; return unless have_xattr();
+  system('xattr','-dr','com.apple.quarantine',$path); my $code=$?>>8;
+  if ($code!=0) {
+    print "Warning: failed to clear quarantine on '$path' (exit $code).\n";
+    print "You can do this manually:\n  xattr -dr com.apple.quarantine '$path'\n";
   } else {
-    print "\n";
-    print "───────────────────────────────────────────────────────────────\n";
-    print "Unsigned package notice (macOS)\n";
-    print "This installer downloaded an UNSIGNED package. macOS Gatekeeper\n";
-    print "may block it the first time you run it.\n\n";
-    print "Option A) I will approve it manually:\n";
-    print "  - Finder → Right-click the app/binary → Open → Open\n";
-    print "  - Or System Settings → Privacy & Security → 'Open Anyway'\n\n";
-    print "Option B) Remove the quarantine flag now (requires consent):\n";
-    print "  This runs: xattr -dr com.apple.quarantine '$path'\n";
-    print "───────────────────────────────────────────────────────────────\n";
-    $doit = prompt_yes_no("Remove quarantine attribute now?", 1);
-  }
-
-  if ($doit) {
-    my @cmd = ('xattr', '-dr', 'com.apple.quarantine', $path);
-    system(@cmd);
-    my $code = $? >> 8;
-    if ($code != 0) {
-      print "Warning: failed to clear quarantine on '$path' (exit $code).\n";
-      print "You can do this manually:\n";
-      print "  xattr -dr com.apple.quarantine '$path'\n";
-    } else {
-      print "[bootstrap] Cleared macOS quarantine on: $path\n";
-    }
-  } else {
-    print "OK. Leaving quarantine in place. You may need to approve the app\n";
-    print "manually on first launch (see instructions above).\n";
+    print "[bootstrap] Cleared macOS quarantine on: $path\n";
   }
 }
 
 # --------------------------
-# Tag/branch resolver (parity with PS)
+# macOS app helpers (install under /Applications)
+# --------------------------
+sub system_app_dir_ok {
+  return (-d '/Applications' && -w '/Applications') ? 1 : 0;
+}
+sub user_app_dir_ok {
+  my $p = "$ENV{HOME}/Applications";
+  return 1 if (-d $p && -w $p);
+  if (!-d $p) { mkdir $p; return 1 if (-d $p && -w $p) }
+  return 0;
+}
+
+# Behavior knobs:
+#   OMNI_APP_INSTALL_DIR=/Applications   -> force that path
+#   OMNI_FORCE_SYSTEM=1                  -> require /Applications (error if not writable)
+# Default: prefer /Applications; if not writable and not forced, fall back to ~/Applications.
+sub choose_app_install_dir {
+  if (defined $ENV{OMNI_APP_INSTALL_DIR} && length $ENV{OMNI_APP_INSTALL_DIR}) {
+    my $d = $ENV{OMNI_APP_INSTALL_DIR};
+    (-d $d && -w $d) or dief("Requested OMNI_APP_INSTALL_DIR='%s' is not writable.\n", $d);
+    return $d;
+  }
+
+  if ($ENV{OMNI_FORCE_SYSTEM}) {
+    system_app_dir_ok() or dief("/Applications is not writable; re-run with privileges or unset OMNI_FORCE_SYSTEM.\n");
+    return '/Applications';
+  }
+
+  return '/Applications' if system_app_dir_ok();
+  # Not writable? graceful fallback:
+  if (user_app_dir_ok()) { return "$ENV{HOME}/Applications" }
+
+  # Last resort: the package root (keeps the bundle inside ~/.local tree)
+  return "$ENV{HOME}/.local/omni-irc/pkg";
+}
+
+sub find_app_bundle_under {
+  my ($root)=@_;
+  my $app = `find "$root" -maxdepth 3 -type d -name 'Omni IRC Client.app' 2>/dev/null`; chomp $app;
+  if (!$app || !-d $app) {
+    $app = `find "$root" -maxdepth 3 -type d -name '*.app' 2>/dev/null | head -n1`; chomp $app;
+  }
+  return (-d $app) ? $app : '';
+}
+
+sub app_inner_exec {
+  my ($app)=@_;
+  my $omni = "$app/Contents/MacOS/omni";
+  return $omni if -f $omni && -x $omni;
+  my $alt = `find "$app/Contents/MacOS" -type f -perm +111 \\( ! -name 'run.sh' \\) 2>/dev/null | head -n1`; chomp $alt;
+  return ($alt && -x $alt) ? $alt : '';
+}
+
+sub ensure_symlink {
+  my ($target,$link)=@_;
+  (-f $target && -x $target) or dief("Not an executable file: %s\n",$target);
+  unlink $link if -e $link or -l $link;
+  run('ln','-s',$target,$link);
+  my $real = readlink($link); $real = $real ? $real : $link;
+  (-f $real && -x $real) or dief("Symlink does not point to an executable: %s -> %s\n",$link,$real);
+}
+
+sub install_app_bundle {
+  my ($bundle_src,$label_root)=@_;
+  my $dest_dir = choose_app_install_dir();
+  my ($name) = $bundle_src =~ m{([^/]+\.app)$};
+  $name ||= 'Omni IRC Client.app';
+  my $dest = "$dest_dir/$name";
+
+  # Best-effort quarantine clear, then copy
+  if ($^O eq 'darwin') { system('xattr','-dr','com.apple.quarantine',$bundle_src); }
+  system('rm','-rf',$dest);
+  print "[bootstrap] installing app to: $dest\n";
+  run('cp','-R',$bundle_src,$dest);
+
+  # Clear on destination (may warn on some files; that’s OK)
+  if ($^O eq 'darwin') { system('xattr','-dr','com.apple.quarantine',$dest); }
+
+  my $inner = app_inner_exec($dest);
+  return ($dest,$inner);
+}
+
+# --------------------------
+# Git ref resolver
 # --------------------------
 sub resolve_release_ref {
-  my ($repo, $rev) = @_;
-  my @candidates;
-  if ($rev =~ /^\d/) { push @candidates, "v$rev" }  # prefer vX.Y.Z for numeric input
-  push @candidates, $rev;
-
-  # tags first
-  for my $cand (@candidates) {
-    my $out = `git ls-remote --tags --refs $repo refs/tags/$cand 2>/dev/null`;
-    return { kind => 'tag', name => $cand } if $out && $? == 0;
+  my ($repo,$rev)=@_;
+  my @c; if ($rev =~ /^\d/) { push @c,"v$rev" } push @c,$rev;
+  for my $x (@c) {
+    my $o = `git ls-remote --tags --refs $repo refs/tags/$x 2>/dev/null`;
+    return {kind=>'tag',name=>$x} if $o && $?==0;
   }
-  # then heads
-  for my $cand (@candidates) {
-    my $out = `git ls-remote --heads $repo refs/heads/$cand 2>/dev/null`;
-    return { kind => 'head', name => $cand } if $out && $? == 0;
+  for my $x (@c) {
+    my $o = `git ls-remote --heads $repo refs/heads/$x 2>/dev/null`;
+    return {kind=>'head',name=>$x} if $o && $?==0;
   }
-  dief("Could not find tag or branch for '%s' (tried: %s)\n", $rev, join(', ', @candidates));
+  dief("Could not find tag or branch for '%s' (tried: %s)\n",$rev,join(', ',@c));
 }
 
 sub clone_or_update_shallow {
-  my ($repo, $ref, $dest) = @_;
-  my $parent = dirname($dest);
-  make_path($parent) unless -d $parent;
-
+  my ($repo,$ref,$dest)=@_;
+  my $parent = dirname($dest); make_path($parent) unless -d $parent;
   if (!-d $dest) {
-    run('git', 'clone', '--depth', '1', '--branch', $ref->{name}, $repo, $dest);
+    run('git','clone','--depth','1','--branch',$ref->{name},$repo,$dest);
   } else {
     print "Reusing $dest\n";
-    run('git', '-C', $dest, 'fetch', '--depth', '1', '--tags', 'origin', $ref->{name});
-    if ($ref->{kind} eq 'tag') {
-      run('git', '-C', $dest, 'checkout', '--force', "refs/tags/$ref->{name}");
-    } else {
-      run('git', '-C', $dest, 'checkout', '--force', $ref->{name});
-    }
-    run('git', '-C', $dest, 'reset', '--hard', '--quiet');
+    run('git','-C',$dest,'fetch','--depth','1','--tags','origin',$ref->{name});
+    if ($ref->{kind} eq 'tag') { run('git','-C',$dest,'checkout','--force',"refs/tags/$ref->{name}") }
+    else { run('git','-C',$dest,'checkout','--force',$ref->{name}) }
+    run('git','-C',$dest,'reset','--hard','--quiet');
   }
 }
 
 # --------------------------
-# Prebuilt installer
+# Prebuilt installer (ZIP/DMG)
 # --------------------------
-sub install_prebuilt_if_available {
-  my ($ver) = @_;
-  my ($plat, $arch) = os_arch();
-  my $owner = 'jesse-greathouse';
-  my $repo  = 'omni-irc';
-  my $base  = "https://github.com/$owner/$repo/releases";
+sub extract_from_dmg {
+  my ($dmg,$inst_root)=@_; dief("DMG extraction only on macOS\n") unless $^O eq 'darwin';
+  my $mnt = File::Temp::tempdir(CLEANUP=>1);
+  my $rc = system('hdiutil','attach','-nobrowse','-quiet','-mountpoint',$mnt,$dmg);
+  $rc==0 or dief("Failed to mount DMG: %s\n",$dmg);
 
-  my @candidates = (
-    ["latest", "$base/latest/download/omni-irc-client-$plat-$arch.zip"],
-    ["v$ver",  "$base/download/v$ver/omni-irc-client-$ver-$plat-$arch.zip"],
-  );
+  my $app = find_app_bundle_under($mnt);
+  my $bindir = "$inst_root/bin"; make_path($bindir) unless -d $bindir;
 
-  my $root = "$ENV{HOME}/.local/omni-irc/pkg";
-  my $chosen;
-  for my $c (@candidates) {
-    my ($label, $url) = @$c;
-    my $code = http_head_302_or_404($url);
-    next unless $code && ($code eq '200' || $code eq '302');
-    $chosen = [$label, $url]; last;
+  if ($app) {
+    my ($installed,$inner) = install_app_bundle($app,$inst_root);
+    system('hdiutil','detach','-quiet',$mnt);
+    $inner && -x $inner or dief("Installed app but inner executable not found\n");
+    my $norm = "$bindir/omni-irc-client";
+    ensure_symlink($inner,$norm);
+    return $norm;
   }
+
+  # Fallback: bare CLI inside DMG
+  my $cli = `find "$mnt" -type f \\( -name 'omni' -o -name 'omni-irc-client' \\) -perm +111 2>/dev/null | head -n1`; chomp $cli;
+  system('hdiutil','detach','-quiet',$mnt);
+  $cli or dief("Could not locate CLI inside DMG\n");
+  run('cp','-f',$cli,"$bindir/omni-irc-client");
+  system('chmod','+x',"$bindir/omni-irc-client");
+  return "$bindir/omni-irc-client";
+}
+
+sub install_prebuilt_if_available {
+  my ($ver)=@_;
+  my ($plat,$arch)=os_arch();
+  my $owner='jesse-greathouse'; my $repo='omni-irc';
+  my $base="https://github.com/$owner/$repo/releases";
+
+  my @platv = ($plat eq 'macos') ? qw(macos darwin) : ($plat);
+  my @archv = ($arch eq 'arm64') ? qw(arm64 aarch64 universal) : ($arch);
+  my @exts  = ($plat eq 'macos') ? qw(zip dmg) : qw(zip);
+
+  my @urls;
+  for my $p (@platv) { for my $a (@archv) { for my $e (@exts) {
+    push @urls, ["v$ver","$base/download/v$ver/omni-irc-client-$ver-$p-$a.$e"];
+    push @urls, ["v$ver","$base/download/v$ver/omni-irc-client-$p-$a.$e"];
+    push @urls, ["latest","$base/latest/download/omni-irc-client-$ver-$p-$a.$e"];
+    push @urls, ["latest","$base/latest/download/omni-irc-client-$p-$a.$e"];
+  }}}
+
+  my $root="$ENV{HOME}/.local/omni-irc/pkg";
+  my $chosen;
+  for my $c (@urls) { my ($label,$url)=@$c; next unless http_head_ok($url); $chosen=[$label,$url]; last }
   return undef unless $chosen;
 
-  my ($label, $url) = @$chosen;
-  my $inst = "$root/$label";
-  my $bindir = "$inst/bin";
-  my $tmp = tempdir(CLEANUP => 1);
-  my $zip = "$tmp/pkg.zip";
+  my ($label,$url)=@$chosen;
+  my $inst="$root/$label"; my $bindir="$inst/bin";
+  my $tmp=File::Temp::tempdir(CLEANUP=>1);
+  make_path($inst) unless -d $inst;
 
   print "[bootstrap] fetching prebuilt client: $url\n";
-  http_download($url, $zip);
+  my ($ext) = $url =~ /\.([A-Za-z0-9]+)$/; $ext = lc($ext // '');
 
-  unzip_to($zip, $inst);
+  if ($ext eq 'zip') {
+    my $zip="$tmp/pkg.zip"; http_download($url,$zip); unzip_to($zip,$inst);
 
-  # macOS: explain/quarantine handling (parity with PS Unblock-File)
-  if ($^O eq 'darwin') {
-    print "\n";
-    print "Note (macOS): this is an unsigned package. Gatekeeper may prompt on\n";
-    print "first launch. You can approve manually, or allow the script to remove\n";
-    print "the quarantine attribute on the extracted files.\n";
-    macos_clear_quarantine_recursively($inst);
+    if ($^O eq 'darwin') {
+      # Prefer app bundle when present
+      my $app = find_app_bundle_under($inst);
+      if ($app) {
+        my ($installed,$inner) = install_app_bundle($app,$inst);
+        if ($inner && -x $inner) {
+          make_path($bindir) unless -d $bindir;
+          my $norm = "$bindir/omni-irc-client";
+          ensure_symlink($inner,$norm);
+          $ENV{OMNI_IRC_CLIENT} = $norm;
+          print "[bootstrap] using app bundle at $installed\n";
+          print "[bootstrap] normalized CLI at $ENV{OMNI_IRC_CLIENT}\n";
+          return 1;
+        }
+        dief("Found app bundle but could not locate executable inside\n");
+      }
+    }
+
+    # Fallback: bare CLI inside ZIP
+    my $cli = `find "$inst" -type f \\( -name 'omni' -o -name 'omni-irc-client' \\) -perm +111 2>/dev/null | head -n1`; chomp $cli;
+    $cli or dief("omni CLI not found in extracted ZIP\n");
+    make_path($bindir) unless -d $bindir;
+    run('cp','-f',$cli,"$bindir/omni-irc-client");
+    system('chmod','+x',"$bindir/omni-irc-client");
   }
-
-  mkdir $bindir unless -d $bindir;
-
-  # Expect the zip to contain ./omni-irc-client (or bin/). Normalize to $bindir/omni-irc-client
-  my $found = '';
-  for my $cand ("$inst/omni-irc-client", "$inst/bin/omni-irc-client") {
-    if (-x $cand) { $found = $cand; last; }
+  elsif ($ext eq 'dmg') {
+    my $dmg="$tmp/pkg.dmg"; http_download($url,$dmg);
+    my $norm = extract_from_dmg($dmg,$inst);
+    $ENV{OMNI_IRC_CLIENT}=$norm;
+    print "[bootstrap] normalized CLI at $ENV{OMNI_IRC_CLIENT}\n";
+    return 1;
   }
-  if (!$found) {
-    my $try = `find "$inst" -type f -name omni-irc-client 2>/dev/null`; chomp $try;
-    $found = $try if $try && -x $try;
-  }
-  $found or dief("omni-irc-client not found in extracted package\n");
+  else { dief("Unsupported asset extension: .%s\n",$ext||'(none)') }
 
-  system('chmod', '+x', $found);
-  system('mkdir', '-p', $bindir);
-  run('cp', '-f', $found, "$bindir/omni-irc-client");
+  # Clear quarantine on the installed tree (best-effort)
+  macos_clear_quarantine_recursively($inst) if $^O eq 'darwin';
 
-  $ENV{OMNI_IRC_CLIENT} = "$bindir/omni-irc-client";
+  $ENV{OMNI_IRC_CLIENT}="$bindir/omni-irc-client";
   print "[bootstrap] using prebuilt binary at $ENV{OMNI_IRC_CLIENT}\n";
   return 1;
 }
@@ -308,7 +316,7 @@ print "[bootstrap] Using OPAMROOT=$ENV{OPAMROOT}\n";
 print "[bootstrap] using opam at: $OPAM\n";
 print "[bootstrap] using git  at: $GIT\n";
 
-# 0.5) Try prebuilt ZIP first; fall back to opam flow if unavailable
+# 0.5) Try prebuilt; fall back to opam build
 if (install_prebuilt_if_available($REV)) {
   print "[bootstrap] prebuilt client installed. Skipping opam build.\n";
   $ENV{PATH} = dirname($ENV{OMNI_IRC_CLIENT}) . ":" . ($ENV{PATH}||'');
@@ -323,127 +331,78 @@ if (install_prebuilt_if_available($REV)) {
 # --------------------------
 # opam fallback (build from source)
 # --------------------------
-
-# ensure OPAM root and init if missing
 if (!-d $ENV{OPAMROOT}) { make_path($ENV{OPAMROOT}); }
 my $config = "$ENV{OPAMROOT}/config";
-if (!-f $config) {
-  run($OPAM, 'init', '--disable-sandboxing');  # fine on macOS/Linux too
-}
+if (!-f $config) { run($OPAM,'init','--disable-sandboxing'); }
 
-# repo check/add; handle stale $OPAMROOT/repo/default
 my $repo_dir = "$ENV{OPAMROOT}/repo/default";
-my $repos = '';
-eval { $repos = capture($OPAM, 'repo', 'list', '--short'); 1 } or $repos = '';
-my %listed = map { $_ => 1 } grep { length } split(/\r?\n/, $repos);
-
+my $repos = ''; eval { $repos = capture($OPAM,'repo','list','--short'); 1 } or $repos='';
+my %listed = map { $_=>1 } grep { length } split(/\r?\n/,$repos);
 if (!$listed{default}) {
   if (-d $repo_dir) {
-    print "Repo dir exists but 'default' is not registered; removing stale dir and re-adding...\n";
-    my $ok_rm = eval { remove_tree($repo_dir, { error => \my $err }); 1 };
-    if (!$ok_rm) {
-      warn "Could not remove stale repo dir at $repo_dir. Attempting 'opam repo set-url'...\n";
-      eval { run($OPAM, 'repo', 'set-url', 'default', 'https://opam.ocaml.org', '--set-default'); 1 }
-        or dief("opam repo registration is inconsistent and the stale dir could not be removed. Close shells/IDEs, delete '%s' manually, then re-run.\n", $repo_dir);
-    }
+    print "Repo dir exists but 'default' not registered; removing stale dir...\n";
+    eval { remove_tree($repo_dir, { error => \my $err }); 1 } or warn "Could not remove stale repo dir at $repo_dir.\n";
   }
-  my $repos2 = '';
-  eval { $repos2 = capture($OPAM, 'repo', 'list', '--short'); 1 } or $repos2 = '';
-  my %listed2 = map { $_ => 1 } grep { length } split(/\r?\n/, $repos2);
-  if (!$listed2{default}) {
-    run($OPAM, 'repo', 'add', 'default', 'https://opam.ocaml.org', '--set-default');
-  }
+  my $repos2 = ''; eval { $repos2 = capture($OPAM,'repo','list','--short'); 1 } or $repos2='';
+  my %listed2 = map { $_=>1 } grep { length } split(/\r?\n/,$repos2);
+  if (!$listed2{default}) { run($OPAM,'repo','add','default','https://opam.ocaml.org','--set-default'); }
 } else {
   print "Default repo already registered.\n";
 }
 
-print "Updating opam package index...\n";
-run($OPAM, 'update');
+print "Updating opam package index...\n"; run($OPAM,'update');
 
-# create switch if missing (prefer ocaml-compiler.$OCAML_HINT, then 5.2.1, then base)
-my $have = capture($OPAM, 'switch', 'list', '--short');
-my %have = map { $_ => 1 } grep { length } split(/\r?\n/, $have);
-
+my $have = capture($OPAM,'switch','list','--short');
+my %have = map { $_=>1 } grep { length } split(/\r?\n/,$have);
 if (!$have{$SWITCH}) {
   print "No '$SWITCH' switch found. Creating it...\n";
-  my @candidates;
+  my @candidates = ();
   push @candidates, "ocaml-compiler.$OCAML_HINT" if $OCAML_HINT;
   push @candidates, "ocaml-compiler.5.2.1";
   push @candidates, "ocaml-base-compiler";
-  my $ok = 0;
+  my $ok=0;
   for my $spec (@candidates) {
-    print "  - trying package set: $spec\n";
-    my $rc = system($OPAM, 'switch', 'create', $SWITCH, '--packages', $spec);
-    if (($rc >> 8) == 0) { $ok = 1; last; }
+    my $rc = system($OPAM,'switch','create',$SWITCH,'--packages',$spec);
+    if (($rc>>8)==0) { $ok=1; last }
   }
-  $ok or dief("Could not create switch '%s' (tried: %s)\n", $SWITCH, join(' | ', @candidates));
+  $ok or dief("Could not create switch '%s'\n",$SWITCH);
 }
 
-# apply opam env to this process
-my $env_lines = capture($OPAM, 'env', '--switch', $SWITCH, '--set-switch', '--shell=sh');
+my $env_lines = capture($OPAM,'env','--switch',$SWITCH,'--set-switch','--shell=sh');
 $env_lines =~ s/\n/; /g;
 for my $stmt (split /\s*;\s*/, $env_lines) {
-  if ($stmt =~ /^\s*export\s+([A-Za-z_][A-Za-z0-9_]*)=(["']?)(.*?)\2\s*$/) {
-    my ($k, $v) = ($1, $3);
-    $ENV{$k} = $v;
-  }
+  if ($stmt =~ /^\s*export\s+([A-Za-z_][A-Za-z0-9_]*)=(["']?)(.*?)\2\s*$/) { $ENV{$1}=$3 }
 }
 
-# Resolve tag/branch like PS script
-my $cache_root = "$ENV{HOME}/.cache/omni-irc/src";
-make_path($cache_root) if !-d $cache_root;
+my $cache_root = "$ENV{HOME}/.cache/omni-irc/src"; make_path($cache_root) if !-d $cache_root;
 my $src_dir = "$cache_root/omni-irc-$REV";
+my $ref = resolve_release_ref($REPO_URL,$REV);
+print "Cloning $REPO_URL @ ".($ref->{kind} eq 'tag' ? "tag $ref->{name}" : "branch $ref->{name}")." -> $src_dir\n";
+clone_or_update_shallow($REPO_URL,$ref,$src_dir);
 
-my $ref = resolve_release_ref($REPO_URL, $REV);
-my $pretty = $ref->{kind} eq 'tag' ? "tag $ref->{name}" : "branch $ref->{name}";
-print "Cloning $REPO_URL @ $pretty -> $src_dir\n";
-clone_or_update_shallow($REPO_URL, $ref, $src_dir);
+run($OPAM,'install','--switch',$SWITCH,'dune','ocamlfind');
 
-# toolchain helpers
-run($OPAM, 'install', '--switch', $SWITCH, 'dune', 'ocamlfind');
-
-# pin all .opam packages (register only; no build yet), recursively
 my @opam_files;
-find(
-  sub {
-    return unless -f $_ && $_ =~ /\.opam$/;
-    push @opam_files, $File::Find::name;
-  },
-  $src_dir
-);
-
-if (!@opam_files) {
-  warn "No .opam files found under $src_dir. Ensure they are present (or generated).\n";
+find(sub { return unless -f $_ && $_ =~ /\.opam$/; push @opam_files, $File::Find::name }, $src_dir);
+if (@opam_files) {
+  print "Pinning packages (no build yet) from: $src_dir\n";
+  my %names = map { my ($n) = $_ =~ m{([^/\\]+)\.opam$}; $n ? ($n=>1) : () } @opam_files;
+  for my $pkg (sort keys %names) { print "  - pinning $pkg\n"; run($OPAM,'pin','add','--switch',$SWITCH,'-k','path','--no-action',$pkg,$src_dir); }
+  run($OPAM,'pin','list','--switch',$SWITCH);
 } else {
-  print "Pinning packages (register only; no build yet) from: $src_dir\n";
-  my %names = map {
-    my ($n) = $_ =~ m{([^/\\]+)\.opam$};
-    $n ? ($n => 1) : ()
-  } @opam_files;
-  for my $pkg (sort keys %names) {
-    print "  - pinning $pkg\n";
-    run($OPAM, 'pin', 'add', '--switch', $SWITCH, '-k', 'path', '--no-action', $pkg, $src_dir);
-  }
-  run($OPAM, 'pin', 'list', '--switch', $SWITCH);
+  warn "No .opam files found under $src_dir.\n";
 }
 
-# (opam ≥ 2.1) install system deps for the pinned client (best-effort)
-eval { run($OPAM, 'install', '--switch', $SWITCH, '--depext-only', 'omni-irc-client'); 1 }
+eval { run($OPAM,'install','--switch',$SWITCH,'--depext-only','omni-irc-client'); 1 }
   or warn "depext-only step failed; you may need system libs (e.g., brew install gmp openssl\@3 pkg-config)\n";
 
-# extra dep that may not be declared upstream
-run($OPAM, 'install', '--switch', $SWITCH, 'yojson');
+run($OPAM,'install','--switch',$SWITCH,'yojson');
+run($OPAM,'install','--switch',$SWITCH,'omni-irc-client');
 
-# install client
-run($OPAM, 'install', '--switch', $SWITCH, 'omni-irc-client');
-
-# report
-my $bin = capture($OPAM, 'var', '--switch', $SWITCH, 'bin');
-$bin =~ s/\s+$//;
+my $bin = capture($OPAM,'var','--switch',$SWITCH,'bin'); $bin =~ s/\s+$//;
 print "omni-irc-client installed to: $bin\n";
-my $exe = "$bin/omni-irc-client";
-$exe .= '.exe' if $^O =~ /MSWin/;
-if (-x $exe) { system($exe, '--help'); }
+my $exe = "$bin/omni-irc-client"; $exe .= '.exe' if $^O =~ /MSWin/;
+if (-x $exe) { system($exe,'--help'); }
 
 print "\nDone. This terminal now has:\n";
 print "  OPAMROOT   = $ENV{OPAMROOT}\n";

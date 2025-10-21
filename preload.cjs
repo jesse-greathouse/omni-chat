@@ -208,6 +208,7 @@ const EXPOSED_API = {
   /* Bootstrap */
   bootstrap: {
     runInTerminal:   () => ipcRenderer.invoke('bootstrap:runTerminal'),
+    start:           () => ipcRenderer.invoke('bootstrap:start'),
     openLogsDir:     () => ipcRenderer.invoke('bootstrap:openLogs'),
     proceedIfReady:  () => ipcRenderer.send('bootstrap:proceed-if-ready'),
 

@@ -22,6 +22,9 @@ let bootstrapChild = null;
 let bootstrapLogPath = null;
 let _cachedOverlayPng = null;
 let settingsWin = null;
+let proceededToMain = false;
+let bootstrapSettled = false;
+let bootstrapSawCompleteBanner = false;
 
 /* =============================================================================
   Paths & Small Utilities
@@ -39,6 +42,24 @@ function genId() { return randomBytes(8).toString('hex'); }
 function sendToAll(ch, payload) {
   for (const w of BrowserWindow.getAllWindows()) w.webContents.send(ch, payload);
 }
+
+async function proceedIfReadyOnce() {
+  if (proceededToMain) return true;
+  try {
+    if (await backendReady()) {
+      proceededToMain = true;
+      try { installerWin?.close(); } catch (e) { console.error('[proceedIfReadyOnce] close installer', e); }
+      if (!mainWin || mainWin.isDestroyed()) {
+        createWindow(); buildMenu(); setupTray();
+      }
+      return true;
+    }
+  } catch (e) {
+    console.error('[proceedIfReadyOnce]', e);
+  }
+  return false;
+}
+
 function pipeChildLogs(child) {
   child.stdout?.on('data', (d) => sendToAll('backend-log', d.toString()));
   child.stderr?.on('data', (d) => sendToAll('backend-log', d.toString()));
@@ -497,34 +518,76 @@ async function getFreePort() {
   });
 }
 
+// Add this helper near resolveTool()
+function isExecFile(p) {
+  try { return !!(p && fs.existsSync(p) && fs.statSync(p).isFile() && (fs.statSync(p).mode & 0o111)); }
+  catch { return false; }
+}
+
+// Add this helper near resolveOmniIrcClientPath()
+function findLocalPrebuiltClient() {
+  const home = os.homedir();
+  const root = path.join(home, '.local', 'omni-irc', 'pkg');
+  if (!fs.existsSync(root)) return null;
+
+  // Prefer a 'current' pointer if you ever add one; otherwise pick the newest-looking dir
+  const entries = fs.readdirSync(root, { withFileTypes: true })
+    .filter(d => d.isDirectory())
+    .map(d => d.name)
+    .sort()            // lexicographic vX.Y.Z sorts OK if prefixed with 'v'; good enough here
+    .reverse();
+
+  for (const dir of entries) {
+    const bin = path.join(root, dir, 'bin', process.platform === 'win32' ? 'omni-irc-client.exe' : 'omni-irc-client');
+    if (isExecFile(bin)) return bin;
+
+    // Fallback: if an app bundle exists under this label, use its inner binary
+    const app = path.join(root, dir, 'Omni IRC Client.app');
+    const inner = path.join(app, 'Contents', 'MacOS', 'omni');
+    if (isExecFile(inner)) return inner;
+  }
+  return null;
+}
+
 async function resolveOmniIrcClientPath(env) {
   const exeName = isWin ? 'omni-irc-client.exe' : 'omni-irc-client';
+
+  // Explicit env
   if (process.env.OMNI_IRC_CLIENT && fs.existsSync(process.env.OMNI_IRC_CLIENT)) return process.env.OMNI_IRC_CLIENT;
 
+  // Prebuilt normalized install under ~/.local/omni-irc/pkg/*
+  const localPrebuilt = findLocalPrebuiltClient();
+  if (localPrebuilt) return localPrebuilt;
+
+  // Windows where
   if (isWin) {
     const fromWhere = whereFirst(exeName);
     if (fromWhere) return fromWhere;
   }
 
+  // Dev tree guess
   try {
     const guess = path.resolve(app.getAppPath(), '..', 'omni-irc', '_build', 'install', 'default', 'bin', exeName);
     if (fs.existsSync(guess)) return guess;
-  } catch (e) { console.warn('[resolveOmniIrcClientPath guess]', e); }
+  } catch {}
 
+  // OPAM switch bin
   const root = env.OPAMROOT || path.join(os.homedir(), '.opam');
   const sw   = env.OPAMSWITCH || 'omni-irc-dev';
   const fromSwitch = path.join(root, sw, 'bin', exeName);
   if (fs.existsSync(fromSwitch)) return fromSwitch;
 
+  // opam var bin
   try {
-    const opamExe = resolveTool(isWin ? 'opam.exe' : 'opam',
-      ['/opt/homebrew/bin','/usr/local/bin','/opt/local/bin']);
+    const opamExe = resolveTool(isWin ? 'opam.exe' : 'opam', ['/opt/homebrew/bin','/usr/local/bin','/opt/local/bin']);
     if (opamExe) {
       const { stdout } = await execFileP(opamExe, ['var', 'bin'], { env, windowsHide: true });
       const p = path.join(stdout.trim(), exeName);
       if (fs.existsSync(p)) return p;
     }
-  } catch (e) { console.warn('[resolveOmniIrcClientPath opam var bin]', e); }
+  } catch (e) {
+    console.warn('[resolveOmniIrcClientPath opam var bin]', e);
+  }
 
   return null;
 }
@@ -687,11 +750,16 @@ read -r _
     catch (e) { console.warn('[bootstrap kill previous]', e); }
     bootstrapChild = null;
   }
+  bootstrapSettled = false;
+  bootstrapSawCompleteBanner = false;
   bootstrapLogPath = path.join(app.getPath('userData'), 'bootstrap.log');
   try {
     fs.mkdirSync(path.dirname(bootstrapLogPath), { recursive: true });
     fs.writeFileSync(bootstrapLogPath, `# Omni-IRC bootstrap log -- ${new Date().toISOString()}\n`);
   } catch (e) { console.error('[bootstrap prepare log]', e); }
+
+  // Hint to the script that we're headless so it must not pause for Enter
+  env.OMNI_BOOTSTRAP_MODE = 'background';
 
   if (isWin) {
     const pwsh = pickPwsh();
@@ -715,7 +783,24 @@ read -r _
       catch (e) { console.warn('[bootstrap logStream.write]', e); }
     }
     sendToAll('bootstrap:log', s);
+
+    // Detect the script's success banner even if it doesn't exit promptly.
+    if (!bootstrapSettled && /Omni-IRC bootstrap is COMPLETE/i.test(s)) {
+      bootstrapSawCompleteBanner = true;
+      setTimeout(async () => {
+        if (!bootstrapSettled) {
+          try { bootstrapChild?.kill?.('SIGTERM'); } catch (_) {}
+          bootstrapSettled = true;
+          sendToAll('bootstrap:done');
+          const okNow = await proceedIfReadyOnce();
+          if (!okNow) setTimeout(() => { proceedIfReadyOnce().catch(e => console.error('[proceed retry]', e)); }, 1500);
+          try { logStream?.end(); } catch (_) {}
+          bootstrapChild = null;
+        }
+      }, 250);
+    }
   };
+
   bootstrapChild.stdout?.setEncoding('utf8');
   bootstrapChild.stderr?.setEncoding('utf8');
   bootstrapChild.stdout?.on('data', pipeChunk);
@@ -726,11 +811,19 @@ read -r _
     sendToAll('bootstrap:error', -1);
   });
   bootstrapChild.on('close', (code) => {
-    if (code === 0) { sendBootstrapLog('\n✔ bootstrap completed successfully\n'); sendToAll('bootstrap:done'); }
-    else { sendBootstrapLog(`\n✘ bootstrap exited with code ${code}\n`); sendToAll('bootstrap:error', code ?? 1); }
-    bootstrapChild = null;
-    try { logStream?.end(); }
-    catch (e) { console.warn('[bootstrap logStream.end]', e); }
+    if (bootstrapSettled) return; // already handled by sentinel path
+    bootstrapSettled = true;
+    if (code === 0 || bootstrapSawCompleteBanner) {
+      sendBootstrapLog('\n✔ bootstrap completed successfully\n');
+      sendToAll('bootstrap:done');
+      (async () => {
+        const okNow = await proceedIfReadyOnce();
+        if (!okNow) setTimeout(() => { proceedIfReadyOnce().catch(e => console.error('[post-close proceed retry]', e)); }, 1500);
+      })().catch(e => console.error('[post-close proceed]', e));
+    } else {
+      sendBootstrapLog(`\n✘ bootstrap exited with code ${code}\n`);
+      sendToAll('bootstrap:error', code ?? 1);
+    }
   });
 
   return true;
@@ -1013,13 +1106,8 @@ function setupIPC() {
   trace('bootstrap:start',       () => runBootstrap({ mode: 'background' }));
   trace('bootstrap:openLogs',    async () => { await shell.openPath(app.getPath('userData')); return true; });
   ipcMain.on('bootstrap:proceed-if-ready', async () => {
-    if (await backendReady()) {
-      try { installerWin?.close(); }
-      catch (e) { console.error('[bootstrap proceed close installerWin]', e); }
-      createWindow(); buildMenu(); setupTray();
-    } else {
-      sendToAll('bootstrap:log', 'Backend still not ready.\n');
-    }
+    const ok = await proceedIfReadyOnce();
+    if (!ok) sendToAll('bootstrap:log', 'Backend still not ready.\n');
   });
 
   // DMs
@@ -1157,7 +1245,10 @@ app.whenReady().then(async () => {
   try { sendToAll('settings:changed', { full: settings.store }); }
   catch (e) { console.warn('[prime settings broadcast]', e); }
   const ok = await ensureBackendReadyAtStartup();
-  if (ok) { createWindow(); buildMenu(); setupTray(); }
+  if (ok) {
+    proceededToMain = true;
+    createWindow(); buildMenu(); setupTray();
+  }
 });
 
 app.on('before-quit', async () => {

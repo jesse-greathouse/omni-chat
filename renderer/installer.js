@@ -6,6 +6,11 @@
   const btnGo    = document.getElementById('btnProceed');
   const logEl    = document.getElementById('log');
 
+  try {
+    statusEl.textContent = 'Installing (background)...';
+    window.api.bootstrap.start();
+  } catch (e) { console.error('[installer] auto-start failed', e); }
+
   if (!window.api || !window.api.bootstrap) {
     console.error('preload/api missing');
     return;
@@ -22,6 +27,9 @@
   const offDone = window.api.bootstrap.onDone(() => {
     statusEl.textContent = 'OK';
     statusEl.classList.add('ok');
+    // Push straight into the app
+    try { window.api.bootstrap.proceedIfReady(); }
+    catch (e) { console.error('[installer] proceedIfReady on done', e); }
   });
   const offErr  = window.api.bootstrap.onError((code) => {
     statusEl.textContent = 'Error';
@@ -37,10 +45,11 @@
   });
 
   btnRun.addEventListener('click', () => {
-    statusEl.textContent = 'Installing...';
+    statusEl.textContent = 'Installing (background)...';
     statusEl.classList.remove('ok', 'err');
-    try { window.api.bootstrap.runInTerminal(); }
-    catch (e) { console.error('[installer] runInTerminal', e); }
+    // Prefer headless install; still works if you keep the terminal mode around.
+    try { window.api.bootstrap.start(); }
+    catch (e) { console.error('[installer] start', e); }
   });
 
   btnOpen.addEventListener('click', () => { try { window.api.bootstrap.openLogsDir(); } catch (e) { console.error('[installer] openLogsDir', e); } });
